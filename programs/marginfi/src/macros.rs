@@ -1,3 +1,6 @@
+// Checks whether a condition is true at runtime.
+// If not, throws an error (MarginfiError) and returns Err.
+// In non-BPF mode, prints the error message, file name and line number for debugging.
 #[macro_export]
 macro_rules! check {
     ($cond:expr, $err:expr) => {
@@ -12,7 +15,7 @@ macro_rules! check {
             );
             return Err(error_code.into());
         }
-    }
+    };
 }
 
 // Check the memory size of the structure

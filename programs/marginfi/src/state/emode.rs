@@ -1,29 +1,37 @@
+use crate::errors::MarginfiError;
+use crate::prelude::MarginfiResult;
+use crate::state::marginfi_group::WrappedI80F48;
+use crate::{assert_struct_align, assert_struct_size, check};
 use anchor_lang::prelude::*;
 use bytemuck::{Pod, Zeroable};
 use fixed::types::I80F48;
-use crate::{assert_struct_size, assert_struct_align, check};
-use crate::state::marginfi_group::WrappedI80F48;
 use type_layout::TypeLayout;
-use crate::prelude::MarginfiResult;
-use crate::errors::MarginfiError;
 
+// Enable eMode flag
 pub const EMODE_ON: u64 = 1;
 
+// Limit each config to 10 entries
 pub const MAX_EMODE_ENTRIES: usize = 10;
+// Represents an invalid tag, used as a sentinel value
 pub const EMODE_TAG_EMPTY: u16 = 0;
 
 assert_struct_size!(EmodeSettings, 424);
 assert_struct_align!(EmodeSettings, 8);
 #[repr(C)]
-#[derive(AnchorSerialize, AnchorDeserialize, Debug, PartialEq, Eq, Pod, Zeroable, Copy, Clone, TypeLayout)]
+#[derive(
+    AnchorSerialize, AnchorDeserialize, Debug, PartialEq, Eq, Pod, Zeroable, Copy, Clone, TypeLayout,
+)]
 pub struct EmodeSettings {
+    // The eMode type of the current bank (for example, all stablecoins may be tag=1)
     pub emode_tag: u16,
     pub pad0: [u8; 6],
     pub timestamp: i64,
     pub flags: u64,
+    // A collection of eMode policies defined for this bank (maximum 10 entries)
     pub emode_config: EmodeConfig,
 }
 
+// Returns an all-zero structure to facilitate initialization of on-chain accounts
 impl Default for EmodeSettings {
     fn default() -> Self {
         Self::zeroed()
@@ -39,17 +47,21 @@ impl EmodeSettings {
             let asset_init_w: I80F48 = I80F48::from(entry.asset_weight_init);
             let asset_maint_w: I80F48 = I80F48::from(entry.asset_weight_maint);
 
+            // The initial mortgage rate must be between 0 (equivalent to 0%) and 1 (equivalent to 100%)
             check!(
                 asset_init_w >= I80F48::ZERO && asset_init_w <= I80F48::ONE,
                 MarginfiError::BadEmodeConfig
             );
+            // The liquidation mortgage ratio cannot be higher than 2 (200%) - a reasonable upper limit is reserved
             check!(
                 asset_maint_w <= (I80F48::ONE + I80F48::ONE),
                 MarginfiError::InvalidConfig
             );
+            // The maintenance mortgage rate must be ≥ the initial mortgage rate (otherwise the user will be liquidated as soon as the loan is completed)
             check!(asset_maint_w >= asset_init_w, MarginfiError::BadEmodeConfig);
         }
 
+        // Check if there are duplicate tags in all entries
         self.check_dupes()?;
 
         Ok(())
@@ -71,9 +83,12 @@ impl EmodeSettings {
         }
     }
 
+    // Check whether the EMODE_ON flag is set, that is, whether the current emode is enabled
     pub fn is_enabled(&self) -> bool {
         self.flags & EMODE_ON != 0
     }
+
+    // Enable/disable emode function
     pub fn set_emode_enabled(&mut self, enabled: bool) {
         if enabled {
             self.flags |= EMODE_ON;
@@ -86,10 +101,11 @@ impl EmodeSettings {
 assert_struct_size!(EmodeConfig, 400);
 assert_struct_align!(EmodeConfig, 8);
 #[repr(C)]
-#[derive(AnchorDeserialize, AnchorSerialize, Debug, PartialEq, Eq, Pod, Zeroable, Copy, Clone, TypeLayout)]
+#[derive(
+    AnchorDeserialize, AnchorSerialize, Debug, PartialEq, Eq, Pod, Zeroable, Copy, Clone, TypeLayout,
+)]
 pub struct EmodeConfig {
     pub entries: [EmodeEntry; MAX_EMODE_ENTRIES],
-
 }
 
 impl EmodeConfig {
@@ -126,12 +142,17 @@ impl EmodeConfig {
 assert_struct_size!(EmodeEntry, 40);
 assert_struct_align!(EmodeEntry, 8);
 #[repr(C)]
-#[derive(AnchorDeserialize, AnchorSerialize, Debug, PartialEq, Eq, Pod, Zeroable, Copy, Clone, TypeLayout)]
+#[derive(
+    AnchorDeserialize, AnchorSerialize, Debug, PartialEq, Eq, Pod, Zeroable, Copy, Clone, TypeLayout,
+)]
 pub struct EmodeEntry {
+    // Which type of collateral object is applicable to this strategy (e.g. tag=1 is a stablecoin)
     pub collateral_bank_emode_tag: u16,
     pub flags: u8,
     pub pad0: [u8; 5],
+    // Initial asset weight for lending (affects the maximum loan amount)
     pub asset_weight_init: WrappedI80F48,
+    // Liquidation asset weight (affects when liquidation occurs)
     pub asset_weight_maint: WrappedI80F48,
 }
 
