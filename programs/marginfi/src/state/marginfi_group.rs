@@ -5,6 +5,8 @@ use bytemuck::{Pod, Zeroable};
 use crate::{borsh::{BorshDeserialize, BorshSerialize}};
 use std::fmt::{Debug, Formatter};
 use fixed::types::I80F48;
+use crate::prelude::MarginfiResult;
+use crate::state::emode::EmodeSettings;
 
 assert_struct_size!(MarginfiGroup, 1056);
 #[account(zero_copy)]
@@ -70,6 +72,20 @@ impl Debug for WrappedI80F48 {
     }
 }
 
+impl From<I80F48> for WrappedI80F48 {
+    fn from(i: I80F48) -> Self {
+        Self {
+            value: i.to_le_bytes(),
+        }
+    }
+}
+
+impl From<WrappedI80F48> for I80F48 {
+    fn from(w: WrappedI80F48) -> Self {
+        Self::from_le_bytes(w.value)
+    }
+}
+
 impl PartialEq for WrappedI80F48 {
     fn eq(&self, other: &Self) -> bool {
         self.value == other.value
@@ -77,3 +93,62 @@ impl PartialEq for WrappedI80F48 {
 }
 
 impl Eq for WrappedI80F48 {}
+
+#[derive(Clone, Debug)]
+pub struct GroupBankConfig {
+    pub program_fees: bool,
+}
+
+assert_struct_size!(Bank, 1856);
+assert_struct_size!(Bank, 8);
+#[account(zero_copy)]
+#[repr(C)]
+#[derive(Default, Debug, PartialEq, Eq, TypeLayout)]
+pub struct Bank {
+    pub mint: Pubkey,
+    pub mint_decimals: u8,
+
+    pub group: Pubkey,
+
+    pub _pad0: [u8; 7],
+
+    pub asset_share_value: WrappedI80F48,
+    pub liability_share_value: WrappedI80F48,
+
+    pub liquidity_vault: Pubkey,
+    pub liquidity_vault_bump: u8,
+    pub liquidity_vault_authority_bump: u8,
+    
+    pub _pad1: [u8; 4],
+
+    pub collected_insurance_fess_outstanding: WrappedI80F48,
+
+    pub fee_vault: Pubkey,
+    pub fee_vault_bump: u8,
+    pub fee_vault_authority_bump: u8,
+
+    pub _pad2: [u8; 6],
+
+    pub collected_group_fees_outstanding: WrappedI80F48,
+    
+    pub total_liability_shares: WrappedI80F48,
+    pub total_asset_shares: WrappedI80F48,
+
+    pub last_update: i64,
+
+    pub config: BankConfig,
+
+    pub flags: u64,
+    pub emissions_rate: u64,
+    pub emissions_reaming: WrappedI80F48,
+    pub emissions_mint: Pubkey,
+
+    pub collected_program_fees_outstanding: WrappedI80F48,
+
+    pub emode: EmodeSettings,
+
+    pub fees_festination_account: Pubkey,
+
+    pub _padding_0: [u8; 8],
+    pub _padding_1: [[u64; 2]; 30],
+}
