@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use bytemuck::{Pod, Zeroable};
 
-#[repr(C)]
+#[repr(u8)]
 #[derive(Copy, Clone, Debug, AnchorDeserialize, AnchorSerialize, PartialEq, Eq)]
 pub enum OracleSetup {
     None,

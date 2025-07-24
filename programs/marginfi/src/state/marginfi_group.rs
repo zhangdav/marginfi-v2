@@ -104,7 +104,7 @@ pub struct GroupBankConfig {
 }
 
 assert_struct_size!(Bank, 1856);
-assert_struct_size!(Bank, 8);
+assert_struct_align!(Bank, 8);
 #[account(zero_copy)]
 #[repr(C)]
 #[derive(Default, Debug, PartialEq, Eq, TypeLayout)]
@@ -148,14 +148,14 @@ pub struct Bank {
 
     pub flags: u64,
     pub emissions_rate: u64,
-    pub emissions_reaming: WrappedI80F48,
+    pub emissions_remaining: WrappedI80F48,
     pub emissions_mint: Pubkey,
 
     pub collected_program_fees_outstanding: WrappedI80F48,
 
     pub emode: EmodeSettings,
 
-    pub fees_festination_account: Pubkey,
+    pub fees_destination_account: Pubkey,
 
     pub _padding_0: [u8; 8],
     pub _padding_1: [[u64; 2]; 30],
