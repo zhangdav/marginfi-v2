@@ -2,6 +2,7 @@ use crate::borsh::{BorshDeserialize, BorshSerialize};
 use crate::constants::{ASSET_TAG_DEFAULT, MAX_ORACLE_KEYS, TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE};
 use crate::prelude::MarginfiResult;
 use crate::state::emode::EmodeSettings;
+use crate::state::marginfi_group;
 use crate::state::price::OracleSetup;
 use crate::{assert_struct_align, assert_struct_size};
 use anchor_lang::prelude::*;
@@ -123,13 +124,16 @@ pub struct Bank {
     pub liquidity_vault_bump: u8,
     pub liquidity_vault_authority_bump: u8,
 
+    // For deposit: a portion of the assets collected by the protocol from interest,
+    // penalties or other sources as risk buffer funds
     pub insurance_vault: Pubkey,
     pub insurance_vault_bump: u8,
     pub insurance_vault_authority_bump: u8,
 
     pub _pad1: [u8; 4],
 
-    pub collected_insurance_fess_outstanding: WrappedI80F48,
+    // Insurance fee that has not yet been withdrawn
+    pub collected_insurance_fees_outstanding: WrappedI80F48,
 
     pub fee_vault: Pubkey,
     pub fee_vault_bump: u8,
@@ -139,6 +143,7 @@ pub struct Bank {
 
     pub collected_group_fees_outstanding: WrappedI80F48,
 
+    // The total number of shares currently lent/deposited by all users
     pub total_liability_shares: WrappedI80F48,
     pub total_asset_shares: WrappedI80F48,
 
@@ -159,6 +164,60 @@ pub struct Bank {
 
     pub _padding_0: [u8; 8],
     pub _padding_1: [[u64; 2]; 30],
+}
+
+// Initialize a Bank instance
+impl Bank {
+    pub const LEN: usize = std::mem::size_of::<Bank>();
+    
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        marginfi_group_pk: Pubkey,
+        config: BankConfig,
+        mint: Pubkey,
+        mint_decimals: u8,
+        liquidity_vault: Pubkey,
+        insurance_vault: Pubkey,
+        fee_vault: Pubkey,
+        current_timestamp: i64,
+        liquidity_vault_bump: u8,
+        liquidity_vault_authority_bump: u8,
+        insurance_vault_bump: u8,
+        insurance_vault_authority_bump: u8,
+        fee_vault_bump: u8,
+        fee_vault_authority_bump: u8,
+    ) -> Bank {
+        Bank {
+            mint,
+            mint_decimals,
+            group: marginfi_group_pk,
+            asset_share_value: I80F48::ONE.into(),
+            liability_share_value: I80F48::ONE.into(),
+            liquidity_vault,
+            liquidity_vault_bump,
+            liquidity_vault_authority_bump,
+            insurance_vault,
+            insurance_vault_bump,
+            insurance_vault_authority_bump,
+            collected_insurance_fees_outstanding: I80F48::ZERO.into(),
+            fee_vault,
+            fee_vault_bump,
+            fee_vault_authority_bump,
+            collected_group_fees_outstanding: I80F48::ZERO.into(),
+            total_liability_shares: I80F48::ZERO.into(),
+            total_asset_shares: I80F48::ZERO.into(),
+            last_update: current_timestamp,
+            config,
+            flags: 0,
+            emissions_rate: 0,
+            emissions_remaining: I80F48::ZERO.into(),
+            emissions_mint: Pubkey::default(),
+            collected_program_fees_outstanding: I80F48::ZERO.into(),
+            emode: EmodeSettings::zeroed(),
+            fees_destination_account: Pubkey::default(),
+            ..Default::default()
+        }
+    }
 }
 
 assert_struct_size!(BankConfig, 544);
