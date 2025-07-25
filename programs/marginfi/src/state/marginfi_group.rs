@@ -1,8 +1,9 @@
 use crate::borsh::{BorshDeserialize, BorshSerialize};
 use crate::constants::{ASSET_TAG_DEFAULT, MAX_ORACLE_KEYS, TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE};
+use crate::errors::MarginfiError;
+use crate::math_error;
 use crate::prelude::MarginfiResult;
 use crate::state::emode::EmodeSettings;
-use crate::state::marginfi_group;
 use crate::state::price::OracleSetup;
 use crate::{assert_struct_align, assert_struct_size};
 use anchor_lang::prelude::*;
@@ -10,6 +11,7 @@ use bytemuck::{Pod, Zeroable};
 use fixed::types::I80F48;
 use std::fmt::{Debug, Formatter};
 use type_layout::TypeLayout;
+use crate::state::marginfi_account::calc_value;
 
 assert_struct_size!(MarginfiGroup, 1056);
 #[account(zero_copy)]
@@ -169,7 +171,7 @@ pub struct Bank {
 // Initialize a Bank instance
 impl Bank {
     pub const LEN: usize = std::mem::size_of::<Bank>();
-    
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         marginfi_group_pk: Pubkey,
@@ -218,7 +220,105 @@ impl Bank {
             ..Default::default()
         }
     }
-}
+
+    // Convert the user's liability shares to the actual loan amount (token quantity)
+    pub fn get_liability_amount(&self, shares: I80F48) -> MarginfiResult<I80F48> {
+        Ok(shares
+            .checked_mul(self.liability_share_value.into())
+            .ok_or_else(math_error!())?)
+    }
+
+    // Convert the user's asset shares into the current actual withdrawable amount
+    pub fn get_asset_amount(&self, shares: I80F48) -> MarginfiResult<I80F48> {
+        Ok(shares
+            .checked_mul(self.asset_share_value.into())
+            .ok_or_else(math_error!())?)
+    }
+
+    // Convert an amount (such as the new loan amount) into the current loan share (liability shares) that should be obtained
+    pub fn get_liability_shares(&self, value: I80F48) -> MarginfiResult<I80F48> {
+        Ok(value
+            .checked_div(self.liability_share_value.into())
+            .ok_or_else(math_error!())?)
+    }
+
+    // Convert a deposit amount into the current deposit share (asset shares) that should be obtained
+    pub fn get_asset_shares(&self, value: I80F48) -> MarginfiResult<I80F48> {
+        Ok(value
+            .checked_div(self.asset_share_value.into())
+            .ok_or_else(math_error!())?)
+    }
+
+    // updating the total_asset_shares of a Bank, check whether the deposit limit has been exceeded.
+    pub fn change_asset_shares(
+        &mut self,
+        shares: I80F48,
+        // Whether to skip the deposit limit check
+        bypass_deposit_limit: bool,
+    ) -> MarginfiResult {
+        let total_asset_shares: I80F48 = self.total_asset_shares.into();
+        self.total_asset_shares = total_asset_shares
+            .checked_add(shares)
+            .ok_or_else(math_error!())?
+            .into();
+
+        // If all of the above are met, check the deposit limit
+        if shares.is_positive() && self.config.is_deposit_limit_active() && !bypass_deposit_limit {
+            let total_deposits_amount = self.get_asset_amount(self.total_asset_shares.into())?;
+            let deposit_limit = I80F48::from_num(self.config.deposit_limit);
+
+            if total_deposits_amount >= deposit_limit {
+                let deposits_num: f64 = total_deposits_amount.to_num();
+                let limit_num: f64 = deposit_limit.to_num();
+                msg!("deposits: {:?} deposit lim: {:?}", deposits_num, limit_num);
+                return err!(MarginfiError::BankAssetCapacityExceeded);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn maybe_get_asset_weight_init_discount(
+        &self,
+        price: I80F48,
+    ) -> MarginfiResult<Option<I80F48>> {
+        if self.config.usd_init_limit_active() {
+            let bank_total_assets_value = calc_value(
+                self.get_asset_amount(self.total_asset_shares.into())?,
+                price,
+                self.mint_decimals,
+                None,
+            )?;
+
+            let total_asset_value_init_limit =
+            I80F48::from_num(self.config.total_asset_value_init_limit);
+
+            #[cfg(target_os = "solana")]
+            debug!(
+                "Init limit active, limit: {}, total_assets: {}",
+                total_asset_value_init_limit, bank_total_assets_value
+            );
+
+            if bank_total_assets_value > total_asset_value_init_limit {
+                let discount = total_asset_value_init_limit
+                    .checked_div(bank_total_assets_value)
+                    .ok_or_else(math_error!())?;
+
+                #[cfg(target_os = "solana")]
+                debug!(
+                    "Discounting assets by {:.2} because of total deposits {} over {} use cap",
+                    discount, bank_total_assets_value, total_asset_value_init_limit
+                );
+
+                Ok(Some(discount))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
+    }
+ }
 
 assert_struct_size!(BankConfig, 544);
 assert_struct_align!(BankConfig, 8);
@@ -292,6 +392,17 @@ impl Default for BankConfig {
             _padding0: [0; 6],
             _padding1: [0; 32],
         }
+    }
+}
+
+impl BankConfig {
+    pub fn usd_init_limit_active(&self) -> bool {
+        self.total_asset_value_init_limit != TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE
+    }
+
+    #[inline]
+    pub fn is_deposit_limit_active(&self) -> bool {
+        self.deposit_limit != u64::MAX
     }
 }
 

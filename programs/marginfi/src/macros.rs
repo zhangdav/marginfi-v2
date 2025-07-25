@@ -33,3 +33,19 @@ macro_rules! assert_struct_align {
         static_assertions::const_assert_eq!(std::mem::align_of::<$struct>(), $align);
     };
 }
+
+#[macro_export]
+macro_rules! math_error {
+    () => {{
+        || {
+            let error_code = $crate::errors::MarginfiError::MathError;
+            anchor_lang::prelude::msg!(
+                "Error \"{}\" thrown at {}:{}",
+                error_code,
+                file!(),
+                line!(),
+            );
+            error_code
+        }
+    }};
+}
