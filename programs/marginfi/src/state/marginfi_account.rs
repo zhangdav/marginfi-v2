@@ -31,6 +31,7 @@ pub struct Balance {
     pub _padding: [u64; 1],
 }
 
+// Convert a token quantity to USD value with 10⁻⁸ precision (I80F48 fixed-point format) at the current price
 #[inline]
 pub fn calc_value(
     amount: I80F48,

@@ -278,11 +278,14 @@ impl Bank {
         Ok(())
     }
 
+    // A Bank configures the "initial margin USD limit" (total_asset_value_init_limit), 
+    // a discount factor is dynamically given to reduce the weight of the asset in the initial margin calculation.
     pub fn maybe_get_asset_weight_init_discount(
         &self,
         price: I80F48,
     ) -> MarginfiResult<Option<I80F48>> {
         if self.config.usd_init_limit_active() {
+            // Calculate the current dollar value of all bank deposits
             let bank_total_assets_value = calc_value(
                 self.get_asset_amount(self.total_asset_shares.into())?,
                 price,
@@ -317,6 +320,49 @@ impl Bank {
         } else {
             Ok(None)
         }
+    }
+
+    // Update the Bank's total liability shares and check the borrow limit
+    pub fn change_liability_shares(
+        &mut self,
+        shares: I80F48,
+        bypass_borrow_limit: bool,
+    ) -> MarginfiResult {
+        let total_liability_shares: I80F48 = self.total_liability_shares.into();
+        self.total_liability_shares = total_liability_shares
+            .checked_add(shares)
+            .ok_or_else(math_error!())?
+            .into();
+
+        if !bypass_borrow_limit && shares.is_positive() && self.config.is_borrow_limit_active() {
+            let total_liability_amount = self.get_liability_amount(self.total_liability_shares.into())?;
+                self.get_liability_amount(self.total_liability_shares.into())?;
+            let borrow_limit = I80F48::from_num(self.config.borrow_limit);
+
+            if total_liability_amount >= borrow_limit {
+                let liab_num: f64 = total_liability_amount.to_num();
+                let borrow_num: f64 = borrow_limit.to_num();
+                msg!("amt: {:?}, borrow lim: {:?}", liab_num, borrow_num);
+                return err!(MarginfiError::BankLiabilityCapacityExceeded);
+            }
+        }
+
+        Ok(())
+    }
+
+    // Check whether the bank's "total assets ≥ total liabilities" is true to prevent illegal capital utilization ratio
+    pub fn check_utilization_ratio(&self) -> MarginfiResult {
+        let total_assets = self.get_asset_amount(self.total_asset_shares.into())?;
+        let total_liabilities = self.get_liability_amount(self.total_liability_shares.into())?;
+
+        if total_assets < total_liabilities {
+            let assets_num: f64 = total_assets.to_num();
+            let liabs_num: f64 = total_liabilities.to_num();
+            msg!("assets: {:?}, liabs: {:?}", assets_num, liabs_num);
+            return err!(MarginfiError::IllegalUtilizationRatio);
+        }
+
+        Ok(())
     }
  }
 
@@ -403,6 +449,11 @@ impl BankConfig {
     #[inline]
     pub fn is_deposit_limit_active(&self) -> bool {
         self.deposit_limit != u64::MAX
+    }
+
+    #[inline]
+    pub fn is_borrow_limit_active(&self) -> bool {
+        self.borrow_limit != u64::MAX
     }
 }
 
