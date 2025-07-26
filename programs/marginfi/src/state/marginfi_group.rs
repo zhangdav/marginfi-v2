@@ -12,6 +12,7 @@ use fixed::types::I80F48;
 use std::fmt::{Debug, Formatter};
 use type_layout::TypeLayout;
 use crate::state::marginfi_account::calc_value;
+use crate::set_if_some;
 
 assert_struct_size!(MarginfiGroup, 1056);
 #[account(zero_copy)]
@@ -364,6 +365,13 @@ impl Bank {
 
         Ok(())
     }
+
+    pub fn configure(&mut self, config: &BankConfigOpt) -> MarginfiResult {
+        set_if_some!(self.config.asset_weight_init, config.asset_weight_init);
+        set_if_some!(self.config.asset_weight_maint, config.asset_weight_maint);
+
+        
+    }
  }
 
 assert_struct_size!(BankConfig, 544);
@@ -457,6 +465,34 @@ impl BankConfig {
     }
 }
 
+#[derive(AnchorDeserialize, AnchorSerialize, Default, Clone, PartialEq, Eq, TypeLayout)]
+pub struct BankConfigOpt {
+    pub asset_weight_init: Option<WrappedI80F48>,
+    pub asset_weight_maint: Option<WrappedI80F48>,
+
+    pub liability_weight_init: Option<WrappedI80F48>,
+    pub liability_weight_maint: Option<WrappedI80F48>,
+
+    pub deposit_limit: Option<u64>,
+    pub borrow_limit: Option<u64>,
+
+    pub operational_state: Option<BankOperationalState>,
+
+    pub initerest_rate_config: Option<InterestRateConfigOpt>,
+
+    pub risk_tier: Option<RiskTier>,
+
+    pub asset_tag: Option<u8>,
+
+    pub total_asset_value_init_limit: Option<u64>,
+
+    pub oracle_max_age: Option<u16>,
+
+    pub permission_bad_debt_settlement: Option<bool>,
+
+    pub freeze_settings: Option<bool>,
+}
+
 assert_struct_size!(InterestRateConfig, 240);
 #[repr(C)]
 #[derive(
@@ -512,3 +548,16 @@ pub enum RiskTier {
 }
 unsafe impl Zeroable for RiskTier {}
 unsafe impl Pod for RiskTier {}
+
+#[derive(AnchorDeserialize, AnchorSerialize, Default, Clone, Debug, PartialEq, Eq, TypeLayout)]
+pub struct InterestRateConfigOpt {
+    pub optimal_utilization_rate: Option<WrappedI80F48>,
+    pub plateau_interest_rate: Option<WrappedI80F48>,
+    pub max_interest_rate: Option<WrappedI80F48>,
+
+    pub insurance_fee_fixed_apr: Option<WrappedI80F48>,
+    pub insurance_ir_fee: Option<WrappedI80F48>,
+    pub protocol_fixed_fee_apr: Option<WrappedI80F48>,
+    pub protocol_ir_fee: Option<WrappedI80F48>,
+    pub protocol_origination_fee: Option<WrappedI80F48>,
+}
