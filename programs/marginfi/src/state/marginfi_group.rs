@@ -369,8 +369,34 @@ impl Bank {
     pub fn configure(&mut self, config: &BankConfigOpt) -> MarginfiResult {
         set_if_some!(self.config.asset_weight_init, config.asset_weight_init);
         set_if_some!(self.config.asset_weight_maint, config.asset_weight_maint);
+        set_if_some!(self.config.liability_weight_init, config.liability_weight_init);
+        set_if_some!(self.config.liability_weight_maint, config.liability_weight_maint);
+        set_if_some!(self.config.deposit_limit, config.deposit_limit);
+        set_if_some!(self.config.borrow_limit, config.borrow_limit);
+        set_if_some!(self.config.operational_state, config.operational_state);
+         
+        if let Some(ir_config) = &config.initerest_rate_config {
+            self.config.interest_rate_config.update(ir_config);
+        }
 
-        
+        set_if_some!(self.config.risk_tier, config.risk_tier);
+        set_if_some!(self.config.asset_tag, config.asset_tag);
+        set_if_some!(self.config.total_asset_value_init_limit, config.total_asset_value_init_limit);
+        set_if_some!(self.config.oracle_max_age, config.oracle_max_age);
+
+        if let Some(flag) = config.permission_bad_debt_settlement {
+            msg!("setting bad debt settlement: {:?}", config.permission_bad_debt_settlement);
+            self.update_flag(flag, PERMISSION_BAD_DEBT_SETTLEMENT_FLAG);
+        }
+
+        if let Some(flag) = config.freeze_settings {
+            msg!("setting freeze settings: {:?}", config.freeze_settings.unwrap());
+            self.update_flag(flag, FREEZE_SETTINGS);
+        }
+
+        self.config.validate()?;
+
+        Ok(())
     }
  }
 
