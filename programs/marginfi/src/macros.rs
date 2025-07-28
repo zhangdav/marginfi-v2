@@ -57,5 +57,5 @@ macro_rules! set_if_some {
             anchor_lang::prelude::msg!("Setting {} to {:?}", stringify!($attr), val);
             $attr = val.into()
         }
-    }
+    };
 }

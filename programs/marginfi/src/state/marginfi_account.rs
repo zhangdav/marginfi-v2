@@ -1,13 +1,13 @@
+use super::price::OraclePriceFeedAdapter;
+use crate::constants::EXP_10_I80F48;
+use crate::math_error;
 use crate::prelude::MarginfiResult;
 use crate::state::marginfi_group::{Bank, WrappedI80F48};
-use super::price::OraclePriceFeedAdapter;
+use crate::{assert_struct_align, assert_struct_size};
 use anchor_lang::prelude::*;
 use bytemuck::{Pod, Zeroable};
 use fixed::types::I80F48;
 use type_layout::TypeLayout;
-use crate::{assert_struct_align, assert_struct_size};
-use crate::constants::EXP_10_I80F48;
-use crate::math_error;
 
 pub struct BankAccountWithPriceFeed<'a, 'info> {
     bank: AccountLoader<'info, Bank>,
@@ -18,7 +18,9 @@ pub struct BankAccountWithPriceFeed<'a, 'info> {
 assert_struct_size!(Balance, 104);
 assert_struct_align!(Balance, 8);
 #[repr(C)]
-#[derive(AnchorDeserialize, AnchorSerialize, Copy, Clone, Zeroable, Pod, PartialEq, Eq, TypeLayout)]
+#[derive(
+    AnchorDeserialize, AnchorSerialize, Copy, Clone, Zeroable, Pod, PartialEq, Eq, TypeLayout,
+)]
 pub struct Balance {
     pub active: u8,
     pub bank_pk: Pubkey,

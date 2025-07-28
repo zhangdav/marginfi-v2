@@ -1,18 +1,21 @@
 use crate::borsh::{BorshDeserialize, BorshSerialize};
-use crate::constants::{ASSET_TAG_DEFAULT, MAX_ORACLE_KEYS, TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE};
+use crate::constants::{
+    ASSET_TAG_DEFAULT, FREEZE_SETTINGS, GROUP_FLAGS, MAX_ORACLE_KEYS,
+    PERMISSIONLESS_BAD_DEBT_SETTLEMENT_FLAG, TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE,
+};
 use crate::errors::MarginfiError;
 use crate::math_error;
 use crate::prelude::MarginfiResult;
+use crate::set_if_some;
 use crate::state::emode::EmodeSettings;
+use crate::state::marginfi_account::calc_value;
 use crate::state::price::OracleSetup;
-use crate::{assert_struct_align, assert_struct_size};
+use crate::{assert_struct_align, assert_struct_size, check};
 use anchor_lang::prelude::*;
 use bytemuck::{Pod, Zeroable};
 use fixed::types::I80F48;
 use std::fmt::{Debug, Formatter};
 use type_layout::TypeLayout;
-use crate::state::marginfi_account::calc_value;
-use crate::set_if_some;
 
 assert_struct_size!(MarginfiGroup, 1056);
 #[account(zero_copy)]
@@ -279,7 +282,7 @@ impl Bank {
         Ok(())
     }
 
-    // A Bank configures the "initial margin USD limit" (total_asset_value_init_limit), 
+    // A Bank configures the "initial margin USD limit" (total_asset_value_init_limit),
     // a discount factor is dynamically given to reduce the weight of the asset in the initial margin calculation.
     pub fn maybe_get_asset_weight_init_discount(
         &self,
@@ -295,7 +298,7 @@ impl Bank {
             )?;
 
             let total_asset_value_init_limit =
-            I80F48::from_num(self.config.total_asset_value_init_limit);
+                I80F48::from_num(self.config.total_asset_value_init_limit);
 
             #[cfg(target_os = "solana")]
             debug!(
@@ -336,8 +339,9 @@ impl Bank {
             .into();
 
         if !bypass_borrow_limit && shares.is_positive() && self.config.is_borrow_limit_active() {
-            let total_liability_amount = self.get_liability_amount(self.total_liability_shares.into())?;
+            let total_liability_amount =
                 self.get_liability_amount(self.total_liability_shares.into())?;
+            self.get_liability_amount(self.total_liability_shares.into())?;
             let borrow_limit = I80F48::from_num(self.config.borrow_limit);
 
             if total_liability_amount >= borrow_limit {
@@ -369,28 +373,43 @@ impl Bank {
     pub fn configure(&mut self, config: &BankConfigOpt) -> MarginfiResult {
         set_if_some!(self.config.asset_weight_init, config.asset_weight_init);
         set_if_some!(self.config.asset_weight_maint, config.asset_weight_maint);
-        set_if_some!(self.config.liability_weight_init, config.liability_weight_init);
-        set_if_some!(self.config.liability_weight_maint, config.liability_weight_maint);
+        set_if_some!(
+            self.config.liability_weight_init,
+            config.liability_weight_init
+        );
+        set_if_some!(
+            self.config.liability_weight_maint,
+            config.liability_weight_maint
+        );
         set_if_some!(self.config.deposit_limit, config.deposit_limit);
         set_if_some!(self.config.borrow_limit, config.borrow_limit);
         set_if_some!(self.config.operational_state, config.operational_state);
-         
+
         if let Some(ir_config) = &config.initerest_rate_config {
             self.config.interest_rate_config.update(ir_config);
         }
 
         set_if_some!(self.config.risk_tier, config.risk_tier);
         set_if_some!(self.config.asset_tag, config.asset_tag);
-        set_if_some!(self.config.total_asset_value_init_limit, config.total_asset_value_init_limit);
+        set_if_some!(
+            self.config.total_asset_value_init_limit,
+            config.total_asset_value_init_limit
+        );
         set_if_some!(self.config.oracle_max_age, config.oracle_max_age);
 
         if let Some(flag) = config.permission_bad_debt_settlement {
-            msg!("setting bad debt settlement: {:?}", config.permission_bad_debt_settlement);
-            self.update_flag(flag, PERMISSION_BAD_DEBT_SETTLEMENT_FLAG);
+            msg!(
+                "setting bad debt settlement: {:?}",
+                config.permission_bad_debt_settlement
+            );
+            self.update_flag(flag, PERMISSIONLESS_BAD_DEBT_SETTLEMENT_FLAG);
         }
 
         if let Some(flag) = config.freeze_settings {
-            msg!("setting freeze settings: {:?}", config.freeze_settings.unwrap());
+            msg!(
+                "setting freeze settings: {:?}",
+                config.freeze_settings.unwrap()
+            );
             self.update_flag(flag, FREEZE_SETTINGS);
         }
 
@@ -398,7 +417,21 @@ impl Bank {
 
         Ok(())
     }
- }
+
+    pub(crate) fn update_flag(&mut self, value: bool, flag: u64) {
+        assert!(Self::verify_group_flags(flag));
+
+        if value {
+            self.flags |= flag;
+        } else {
+            self.flags &= !flag;
+        }
+    }
+
+    const fn verify_group_flags(flags: u64) -> bool {
+        flags & GROUP_FLAGS == flags
+    }
+}
 
 assert_struct_size!(BankConfig, 544);
 assert_struct_align!(BankConfig, 8);
@@ -476,6 +509,40 @@ impl Default for BankConfig {
 }
 
 impl BankConfig {
+    pub fn validate(&self) -> MarginfiResult {
+        let asset_init_w = I80F48::from(self.asset_weight_init);
+        let asset_maint_w = I80F48::from(self.asset_weight_maint);
+
+        check!(
+            asset_init_w >= I80F48::ZERO && asset_init_w <= I80F48::ONE,
+            MarginfiError::InvalidConfig
+        );
+
+        check!(
+            asset_maint_w <= (I80F48::ONE + I80F48::ONE),
+            MarginfiError::InvalidConfig
+        );
+        check!(asset_maint_w >= asset_init_w, MarginfiError::InvalidConfig);
+
+        let liab_init_w = I80F48::from(self.liability_weight_init);
+        let liab_maint_w = I80F48::from(self.liability_weight_maint);
+
+        check!(liab_init_w >= I80F48::ONE, MarginfiError::InvalidConfig);
+        check!(
+            liab_maint_w <= liab_init_w && liab_maint_w >= I80F48::ONE,
+            MarginfiError::InvalidConfig
+        );
+
+        self.interest_rate_config.validate()?;
+
+        if self.risk_tier == RiskTier::Isolated {
+            check!(asset_init_w == I80F48::ZERO, MarginfiError::InvalidConfig);
+            check!(asset_maint_w == I80F48::ZERO, MarginfiError::InvalidConfig);
+        }
+
+        Ok(())
+    }
+
     pub fn usd_init_limit_active(&self) -> bool {
         self.total_asset_value_init_limit != TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE
     }
@@ -553,6 +620,47 @@ pub struct InterestRateConfig {
 
     pub _padding0: [u8; 16],
     pub _padding1: [[u8; 32]; 3],
+}
+
+impl InterestRateConfig {
+    pub fn validate(&self) -> MarginfiResult {
+        let optimal_ur: I80F48 = self.optimal_utilization_rate.into();
+        let plateau_ir: I80F48 = self.plateau_interest_rate.into();
+        let max_ir: I80F48 = self.max_interest_rate.into();
+
+        check!(
+            optimal_ur > I80F48::ZERO && optimal_ur < I80F48::ONE,
+            MarginfiError::InvalidConfig
+        );
+        check!(plateau_ir > I80F48::ZERO, MarginfiError::InvalidConfig);
+        check!(max_ir > I80F48::ZERO, MarginfiError::InvalidConfig);
+        check!(plateau_ir < max_ir, MarginfiError::InvalidConfig);
+
+        Ok(())
+    }
+
+    pub fn update(&mut self, ir_config: &InterestRateConfigOpt) {
+        set_if_some!(
+            self.optimal_utilization_rate,
+            ir_config.optimal_utilization_rate
+        );
+        set_if_some!(self.plateau_interest_rate, ir_config.plateau_interest_rate);
+        set_if_some!(self.max_interest_rate, ir_config.max_interest_rate);
+        set_if_some!(
+            self.insurance_fee_fixed_apr,
+            ir_config.protocol_fixed_fee_apr
+        );
+        set_if_some!(self.insurance_ir_fee, ir_config.insurance_ir_fee);
+        set_if_some!(
+            self.protocol_fixed_fee_apr,
+            ir_config.protocol_fixed_fee_apr
+        );
+        set_if_some!(self.protocol_ir_fee, ir_config.protocol_ir_fee);
+        set_if_some!(
+            self.protocol_origination_fee,
+            ir_config.protocol_origination_fee
+        );
+    }
 }
 
 #[repr(u8)]

@@ -5,6 +5,14 @@ pub const MAX_ORACLE_KEYS: usize = 5;
 pub const ASSET_TAG_DEFAULT: u8 = 0;
 pub const TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE: u64 = 0;
 
+// Anyone can try to settle bad debts in an account without permission or administrator status
+pub const PERMISSIONLESS_BAD_DEBT_SETTLEMENT_FLAG: u64 = 1 << 2;
+
+// Some of the Bank's configurations are frozen and cannot be changed.
+pub const FREEZE_SETTINGS: u64 = 1 << 3;
+
+pub const GROUP_FLAGS: u64 = PERMISSIONLESS_BAD_DEBT_SETTLEMENT_FLAG | FREEZE_SETTINGS;
+
 pub const MAX_EXP_10_I80F48: usize = 24;
 pub const EXP_10_I80F48: [I80F48; MAX_EXP_10_I80F48] = [
     I80F48!(1),                        // 10^0
