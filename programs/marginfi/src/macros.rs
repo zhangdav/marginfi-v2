@@ -59,3 +59,13 @@ macro_rules! set_if_some {
         }
     };
 }
+
+#[macro_export]
+macro_rules! debug {
+    ($($arg:tt)*) => {
+        #[cfg(feature = "debug")]
+        {
+            anchor_lang::prelude::msg!($($arg)*);
+        }
+    };
+}

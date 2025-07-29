@@ -13,6 +13,8 @@ pub const FREEZE_SETTINGS: u64 = 1 << 3;
 
 pub const GROUP_FLAGS: u64 = PERMISSIONLESS_BAD_DEBT_SETTLEMENT_FLAG | FREEZE_SETTINGS;
 
+pub const SECONDS_PER_YEAR: I80F48 = I80F48!(31_536_000);
+
 pub const MAX_EXP_10_I80F48: usize = 24;
 pub const EXP_10_I80F48: [I80F48; MAX_EXP_10_I80F48] = [
     I80F48!(1),                        // 10^0

@@ -1,21 +1,25 @@
 use crate::borsh::{BorshDeserialize, BorshSerialize};
 use crate::constants::{
     ASSET_TAG_DEFAULT, FREEZE_SETTINGS, GROUP_FLAGS, MAX_ORACLE_KEYS,
-    PERMISSIONLESS_BAD_DEBT_SETTLEMENT_FLAG, TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE,
+    PERMISSIONLESS_BAD_DEBT_SETTLEMENT_FLAG, SECONDS_PER_YEAR,
+    TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE,
 };
 use crate::errors::MarginfiError;
-use crate::math_error;
+use crate::events::{GroupEventHeader, LendingPoolBankAccrueInterestEvent};
 use crate::prelude::MarginfiResult;
 use crate::set_if_some;
 use crate::state::emode::EmodeSettings;
 use crate::state::marginfi_account::calc_value;
 use crate::state::price::OracleSetup;
 use crate::{assert_struct_align, assert_struct_size, check};
+use crate::{debug, math_error};
 use anchor_lang::prelude::*;
 use bytemuck::{Pod, Zeroable};
 use fixed::types::I80F48;
 use std::fmt::{Debug, Formatter};
 use type_layout::TypeLayout;
+
+pub const PROGRAM_FEES_ENABLED: u64 = 1;
 
 assert_struct_size!(MarginfiGroup, 1056);
 #[account(zero_copy)]
@@ -38,6 +42,14 @@ pub struct MarginfiGroup {
     pub _padding_0: [[u64; 2]; 24],
     pub _padding_1: [[u64; 2]; 32],
     pub _padding_4: u64,
+}
+
+impl MarginfiGroup {
+    pub fn get_group_bank_config(&self) -> GroupBankConfig {
+        GroupBankConfig {
+            program_fees: self.group_flags == PROGRAM_FEES_ENABLED,
+        }
+    }
 }
 
 #[derive(
@@ -418,6 +430,124 @@ impl Bank {
         Ok(())
     }
 
+    // Configures just the borrow and deposit limits, ignoring all other values
+    pub fn configure_unfrozen_files_only(&mut self, config: &BankConfigOpt) -> MarginfiResult {
+        set_if_some!(self.config.deposit_limit, config.deposit_limit);
+        set_if_some!(self.config.borrow_limit, config.borrow_limit);
+
+        Ok(())
+    }
+
+    pub fn accrue_interest(
+        &mut self,
+        current_timestamp: i64,
+        group: &MarginfiGroup,
+        #[cfg(not(feature = "client"))] bank: Pubkey,
+    ) -> MarginfiResult<()> {
+        #[cfg(all(not(feature = "client"), feature = "debug"))]
+        anchor_lang::solana_program::log::sol_log_compute_units();
+
+        let time_delta: u64 = (current_timestamp - self.last_update).try_into().unwrap();
+        if time_delta == 0 {
+            return Ok(());
+        }
+
+        let total_assets = self.get_asset_amount(self.total_asset_shares.into())?;
+        let total_liabilities = self.get_liability_amount(self.total_liability_shares.into())?;
+
+        self.last_update = current_timestamp;
+
+        if (total_assets == I80F48::ZERO) || (total_liabilities == I80F48::ZERO) {
+            #[cfg(not(feature = "client"))]
+            emit!(LendingPoolBankAccrueInterestEvent {
+                header: GroupEventHeader {
+                    marginfi_group: self.group,
+                    signer: None
+                },
+                bank,
+                mint: self.mint,
+                delta: time_delta,
+                fees_collected: 0.,
+                insurance_collected: 0.,
+            });
+
+            return Ok(());
+        }
+        let ir_calc = self
+            .config
+            .interest_rate_config
+            .create_interest_rate_calculator(group);
+
+        let InterestRateStateChanges {
+            new_asset_share_value: asset_share_value,
+            new_liability_share_value: liability_share_value,
+            insurance_fees_collected,
+            group_fees_collected,
+            protocol_fees_collected,
+        } = calc_interest_rate_accrual_state_changes(
+            time_delta,
+            total_assets,
+            total_liabilities,
+            &ir_calc,
+            self.asset_share_value.into(),
+            self.liability_share_value.into(),
+        )
+        .ok_or_else(math_error!())?;
+
+        debug!("deposit share value: {}\nlibality share value: {}\nfees collected: {}\ninsurance collected: {}",
+            asset_share_value, liability_share_value, group_fees_collected, insurance_fees_collected);
+
+        self.asset_share_value = asset_share_value.into();
+        self.liability_share_value = liability_share_value.into();
+
+        if group_fees_collected > I80F48::ZERO {
+            self.collected_group_fees_outstanding = {
+                group_fees_collected
+                    .checked_add(self.collected_group_fees_outstanding.into())
+                    .ok_or_else(math_error!())?
+                    .into()
+            };
+        }
+
+        if insurance_fees_collected > I80F48::ZERO {
+            self.collected_insurance_fees_outstanding = {
+                insurance_fees_collected
+                    .checked_add(self.collected_insurance_fees_outstanding.into())
+                    .ok_or_else(math_error!())?
+                    .into()
+            };
+        }
+
+        if protocol_fees_collected > I80F48::ZERO {
+            self.collected_program_fees_outstanding = {
+                protocol_fees_collected
+                    .checked_add(self.collected_program_fees_outstanding.into())
+                    .ok_or_else(math_error!())?
+                    .into()
+            };
+        }
+
+        #[cfg(not(feature = "client"))]
+        {
+            #[cfg(feature = "debug")]
+            anchor_lang::solana_program::log::sol_log_compute_units();
+
+            emit!(LendingPoolBankAccrueInterestEvent {
+                header: GroupEventHeader {
+                    marginfi_group: self.group,
+                    signer: None
+                },
+                bank,
+                mint: self.mint,
+                delta: time_delta,
+                fees_collected: group_fees_collected.to_num::<f64>(),
+                insurance_collected: insurance_fees_collected.to_num::<f64>(),
+            });
+        }
+
+        Ok(())
+    }
+
     pub(crate) fn update_flag(&mut self, value: bool, flag: u64) {
         assert!(Self::verify_group_flags(flag));
 
@@ -623,6 +753,27 @@ pub struct InterestRateConfig {
 }
 
 impl InterestRateConfig {
+    pub fn create_interest_rate_calculator(&self, group: &MarginfiGroup) -> InterestRateCalc {
+        let group_bank_config = &group.get_group_bank_config();
+        debug!(
+            "Creating interest rate calculator with protocol fees: {}",
+            group_bank_config.program_fees
+        );
+
+        InterestRateCalc {
+            optimal_utilization_rate: self.optimal_utilization_rate.into(),
+            plateau_interest_rate: self.plateau_interest_rate.into(),
+            max_interest_rate: self.max_interest_rate.into(),
+            insurance_fixed_fee: self.insurance_fee_fixed_apr.into(),
+            insurance_rate_fee: self.insurance_ir_fee.into(),
+            protocol_fixed_fee: self.protocol_fixed_fee_apr.into(),
+            protocol_rate_fee: self.protocol_ir_fee.into(),
+            add_program_fees: group_bank_config.program_fees,
+            program_fee_fixed: group.fee_state_cache.program_fee_fixed.into(),
+            program_fee_rate: group.fee_state_cache.program_fee_rate.into(),
+        }
+    }
+
     pub fn validate(&self) -> MarginfiResult {
         let optimal_ur: I80F48 = self.optimal_utilization_rate.into();
         let plateau_ir: I80F48 = self.plateau_interest_rate.into();
@@ -694,4 +845,233 @@ pub struct InterestRateConfigOpt {
     pub protocol_fixed_fee_apr: Option<WrappedI80F48>,
     pub protocol_ir_fee: Option<WrappedI80F48>,
     pub protocol_origination_fee: Option<WrappedI80F48>,
+}
+
+#[derive(Debug, Clone)]
+pub struct InterestRateCalc {
+    optimal_utilization_rate: I80F48,
+    plateau_interest_rate: I80F48,
+    max_interest_rate: I80F48,
+
+    // Fees
+    insurance_fixed_fee: I80F48,
+    insurance_rate_fee: I80F48,
+    // AKA group fixed fee
+    protocol_fixed_fee: I80F48,
+    // AKA group rate fee
+    protocol_rate_fee: I80F48,
+
+    program_fee_fixed: I80F48,
+    program_fee_rate: I80F48,
+
+    add_program_fees: bool,
+}
+
+impl InterestRateCalc {
+    /// Return interest rate charged to borrowers and to depositors.
+    /// Rate is denominated in APR (0-).
+    ///
+    /// Return ComputedInterestRates
+    pub fn calc_interest_rate(&self, utilization_ratio: I80F48) -> Option<ComputedInterestRates> {
+        let Fees {
+            insurance_fee_rate,
+            insurance_fee_fixed,
+            group_fee_rate,
+            group_fee_fixed,
+            protocol_fee_rate,
+            protocol_fee_fixed,
+        } = self.get_fees();
+
+        let fee_ir = insurance_fee_rate + group_fee_rate + protocol_fee_rate;
+        let fee_fixed = insurance_fee_fixed + group_fee_fixed + protocol_fee_fixed;
+
+        let base_rate = self.interest_rate_curve(utilization_ratio)?;
+
+        // Lending rate is adjusted for utilization ratio to symmetrize payments between borrowers and depositors.
+        let lending_rate_apr = base_rate.checked_mul(utilization_ratio)?;
+
+        // Borrowing rate is adjusted for fees.
+        // borrowing_rate = base_rate + base_rate * rate_fee + total_fixed_fee_apr
+        let borrowing_rate_apr = base_rate
+            .checked_mul(I80F48::ONE.checked_add(fee_ir)?)?
+            .checked_add(fee_fixed)?;
+
+        let group_fee_apr = calc_fee_rate(base_rate, group_fee_rate, group_fee_fixed)?;
+        let insurance_fee_apr = calc_fee_rate(base_rate, insurance_fee_rate, insurance_fee_fixed)?;
+        let protocol_fee_apr = calc_fee_rate(base_rate, protocol_fee_rate, protocol_fee_fixed)?;
+
+        assert!(lending_rate_apr >= I80F48::ZERO);
+        assert!(borrowing_rate_apr >= I80F48::ZERO);
+        assert!(group_fee_apr >= I80F48::ZERO);
+        assert!(insurance_fee_apr >= I80F48::ZERO);
+        assert!(protocol_fee_apr >= I80F48::ZERO);
+
+        // TODO: Add liquidation discount check
+        Some(ComputedInterestRates {
+            lending_rate_apr,
+            borrowing_rate_apr,
+            group_fee_apr,
+            insurance_fee_apr,
+            protocol_fee_apr,
+        })
+    }
+
+    /// Piecewise linear interest rate function.
+    /// The curves approaches the `plateau_interest_rate` as the utilization ratio approaches the `optimal_utilization_rate`,
+    /// once the utilization ratio exceeds the `optimal_utilization_rate`, the curve approaches the `max_interest_rate`.
+    ///
+    /// To be clear we don't particularly appreciate the piecewise linear nature of this "curve", but it is what it is.
+    #[inline]
+    fn interest_rate_curve(&self, ur: I80F48) -> Option<I80F48> {
+        let optimal_ur: I80F48 = self.optimal_utilization_rate;
+        let plateau_ir: I80F48 = self.plateau_interest_rate;
+        let max_ir: I80F48 = self.max_interest_rate;
+
+        if ur <= optimal_ur {
+            ur.checked_div(optimal_ur)?.checked_mul(plateau_ir)
+        } else {
+            (ur - optimal_ur)
+                .checked_div(I80F48::ONE - optimal_ur)?
+                .checked_mul(max_ir - plateau_ir)?
+                .checked_add(plateau_ir)
+        }
+    }
+
+    pub fn get_fees(&self) -> Fees {
+        let (protocol_fee_rate, protocol_fee_fixed) = if self.add_program_fees {
+            (self.program_fee_rate, self.program_fee_fixed)
+        } else {
+            (I80F48::ZERO, I80F48::ZERO)
+        };
+
+        Fees {
+            insurance_fee_rate: self.insurance_rate_fee,
+            insurance_fee_fixed: self.insurance_fixed_fee,
+            group_fee_rate: self.protocol_rate_fee,
+            group_fee_fixed: self.protocol_fixed_fee,
+            protocol_fee_rate,
+            protocol_fee_fixed,
+        }
+    }
+}
+
+struct InterestRateStateChanges {
+    new_asset_share_value: I80F48,
+    new_liability_share_value: I80F48,
+    insurance_fees_collected: I80F48,
+    group_fees_collected: I80F48,
+    protocol_fees_collected: I80F48,
+}
+
+fn calc_interest_rate_accrual_state_changes(
+    time_delta: u64,
+    total_assets_amount: I80F48,
+    total_liabilities_amount: I80F48,
+    interest_rate_calc: &InterestRateCalc,
+    asset_share_value: I80F48,
+    liability_share_value: I80F48,
+) -> Option<InterestRateStateChanges> {
+    let utilization_rate = total_liabilities_amount.checked_div(total_assets_amount)?;
+    let computed_rates = interest_rate_calc.calc_interest_rate(utilization_rate)?;
+
+    debug!(
+        "Utilization rate: {}, time delta {}s",
+        utilization_rate, time_delta
+    );
+    debug!("{:#?}", computed_rates);
+
+    let ComputedInterestRates {
+        lending_rate_apr,
+        borrowing_rate_apr,
+        group_fee_apr,
+        insurance_fee_apr,
+        protocol_fee_apr,
+    } = computed_rates;
+
+    Some(InterestRateStateChanges {
+        new_asset_share_value: calc_accrued_interest_payment_per_period(
+            lending_rate_apr,
+            time_delta,
+            asset_share_value,
+        )?,
+        new_liability_share_value: calc_accrued_interest_payment_per_period(
+            borrowing_rate_apr,
+            time_delta,
+            liability_share_value,
+        )?,
+        insurance_fees_collected: calc_interest_payment_for_period(
+            insurance_fee_apr,
+            time_delta,
+            total_liabilities_amount,
+        )?,
+        group_fees_collected: calc_interest_payment_for_period(
+            group_fee_apr,
+            time_delta,
+            total_liabilities_amount,
+        )?,
+        protocol_fees_collected: calc_interest_payment_for_period(
+            protocol_fee_apr,
+            time_delta,
+            total_liabilities_amount,
+        )?,
+    })
+}
+
+/// Calculates the fee rate for a given base rate and fees specified.
+/// The returned rate is only the fee rate without the base rate.
+///
+/// Used for calculating the fees charged to the borrowers.
+fn calc_fee_rate(base_rate: I80F48, rate_fees: I80F48, fixed_fees: I80F48) -> Option<I80F48> {
+    if rate_fees.is_zero() {
+        return Some(fixed_fees);
+    }
+
+    base_rate.checked_mul(rate_fees)?.checked_add(fixed_fees)
+}
+
+/// Calculates the accrued interest payment per period `time_delta` in a principal value `value` for interest rate (in APR) `arp`.
+/// Result is the new principal value.
+fn calc_accrued_interest_payment_per_period(
+    apr: I80F48,
+    time_delta: u64,
+    value: I80F48,
+) -> Option<I80F48> {
+    let ir_per_period = apr.checked_mul(time_delta.into())?;
+    let new_value = value.checked_mul(I80F48::ONE.checked_add(ir_per_period)?)?;
+
+    Some(new_value)
+}
+
+/// Calculates the interest payment for a given period `time_delta` in a principal value `value` for interest rate (in APR) `arp`.
+/// Result is the interest payment.
+fn calc_interest_payment_for_period(apr: I80F48, time_delta: u64, value: I80F48) -> Option<I80F48> {
+    if apr.is_zero() {
+        return Some(I80F48::ZERO);
+    }
+
+    let interest_payment = value
+        .checked_mul(apr)?
+        .checked_mul(time_delta.into())?
+        .checked_div(SECONDS_PER_YEAR)?;
+
+    Some(interest_payment)
+}
+
+#[derive(Debug, Clone)]
+pub struct Fees {
+    pub insurance_fee_rate: I80F48,
+    pub insurance_fee_fixed: I80F48,
+    pub group_fee_rate: I80F48,
+    pub group_fee_fixed: I80F48,
+    pub protocol_fee_rate: I80F48,
+    pub protocol_fee_fixed: I80F48,
+}
+
+#[derive(Debug, Clone)]
+pub struct ComputedInterestRates {
+    pub lending_rate_apr: I80F48,
+    pub borrowing_rate_apr: I80F48,
+    pub group_fee_apr: I80F48,
+    pub insurance_fee_apr: I80F48,
+    pub protocol_fee_apr: I80F48,
 }
