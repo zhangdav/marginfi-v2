@@ -651,6 +651,26 @@ impl Bank {
         Ok(())
     }
 
+    /// Socialize a loss `loss_amount` among depositors,
+    /// the `total_deposit_shares` stays the same, but total value of deposits is
+    /// reduced by `loss_amount`;
+    pub fn socialize_loss(&mut self, loss_amount: I80F48) -> MarginfiResult {
+        let total_asset_shares: I80F48 = self.total_asset_shares.into();
+        let old_asset_share_value: I80F48 = self.asset_share_value.into();
+
+        let new_share_value = total_asset_shares
+            .checked_mul(old_asset_share_value)
+            .ok_or_else(math_error!())?
+            .checked_sub(loss_amount)
+            .ok_or_else(math_error!())?
+            .checked_div(total_asset_shares)
+            .ok_or_else(math_error!())?;
+
+        self.asset_share_value = new_share_value.into();
+
+        Ok(())
+    }
+
     pub(crate) fn update_flag(&mut self, value: bool, flag: u64) {
         assert!(Self::verify_group_flags(flag));
 
