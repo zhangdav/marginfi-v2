@@ -14,11 +14,11 @@ use crate::state::price::OracleSetup;
 use crate::{assert_struct_align, assert_struct_size, check};
 use crate::{debug, math_error};
 use anchor_lang::prelude::*;
+use anchor_spl::token_interface::*;
 use bytemuck::{Pod, Zeroable};
 use fixed::types::I80F48;
 use std::fmt::{Debug, Formatter};
 use type_layout::TypeLayout;
-use anchor_spl::token_interface::*;
 
 pub const PROGRAM_FEES_ENABLED: u64 = 1;
 
@@ -561,10 +561,15 @@ impl Bank {
         program: AccountInfo<'info>,
         remaining_accounts: &[AccountInfo<'info>],
     ) -> MarginfiResult {
-        check!(to.key.eq(&self.liquidity_vault), MarginfiError::InvalidTransfer);
+        check!(
+            to.key.eq(&self.liquidity_vault),
+            MarginfiError::InvalidTransfer
+        );
 
-        debug!("deposit_spl_transfer: amount: {} from {} to {}, auth {}",
-                amount, from.key, to.key, authority.key);
+        debug!(
+            "deposit_spl_transfer: amount: {} from {} to {}, auth {}",
+            amount, from.key, to.key, authority.key
+        );
 
         if let Some(mint) = maybe_mint {
             spl_token_2022::onchain::invoke_transfer_checked(
@@ -589,6 +594,55 @@ impl Bank {
                         authority,
                     },
                     &[],
+                ),
+                amount,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub fn withdraw_spl_transfer<'info>(
+        &self,
+        amount: u64,
+        from: AccountInfo<'info>,
+        to: AccountInfo<'info>,
+        authority: AccountInfo<'info>,
+        maybe_mint: Option<&InterfaceAccount<'info, Mint>>,
+        program: AccountInfo<'info>,
+        signer_seeds: &[&[&[u8]]],
+        remaining_accounts: &[AccountInfo<'info>],
+    ) -> MarginfiResult {
+        debug!("withdraw_spl_transfer: amount: {} from {} to {}, auth {}",
+            amount, from.key, to.key, authority.key);
+        
+        if let Some(mint) = maybe_mint {
+            spl_token_2022::onchain::invoke_transfer_checked(
+                program.key,
+                from,
+                mint.to_account_info(),
+                to,
+                authority,
+                remaining_accounts,
+                amount,
+                mint.decimals,
+                signer_seeds,
+            )?;
+        } else {
+            // `transfer_checked` and `transfer` does the same thing, the additional `_checked` logic
+            // is only to assert the expected attributes by the user (mint, decimal scaling),
+            //
+            // Security of `transfer` is equal to `transfer_checked`.
+            #[allow(deprecated)]
+            transfer(
+                CpiContext::new_with_signer(
+                    program,
+                    Transfer {
+                        from,
+                        to,
+                        authority,
+                    },
+                    signer_seeds,
                 ),
                 amount,
             )?;
