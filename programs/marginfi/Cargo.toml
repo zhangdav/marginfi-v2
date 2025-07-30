@@ -29,4 +29,5 @@ pyth-solana-receiver-sdk = "0.6.1"
 switchboard-on-demand = "0.4.9"
 enum_dispatch = "0.3.13"
 fixed-macro = "1.2.0"
+anchor-spl = "0.31.1"
 

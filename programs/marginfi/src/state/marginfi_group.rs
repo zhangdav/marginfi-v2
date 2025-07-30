@@ -18,6 +18,7 @@ use bytemuck::{Pod, Zeroable};
 use fixed::types::I80F48;
 use std::fmt::{Debug, Formatter};
 use type_layout::TypeLayout;
+use anchor_spl::token_interface::*;
 
 pub const PROGRAM_FEES_ENABLED: u64 = 1;
 
@@ -397,7 +398,7 @@ impl Bank {
         set_if_some!(self.config.borrow_limit, config.borrow_limit);
         set_if_some!(self.config.operational_state, config.operational_state);
 
-        if let Some(ir_config) = &config.initerest_rate_config {
+        if let Some(ir_config) = &config.interest_rate_config {
             self.config.interest_rate_config.update(ir_config);
         }
 
@@ -444,6 +445,7 @@ impl Bank {
         group: &MarginfiGroup,
         #[cfg(not(feature = "client"))] bank: Pubkey,
     ) -> MarginfiResult<()> {
+        // Locating expensive logic
         #[cfg(all(not(feature = "client"), feature = "debug"))]
         anchor_lang::solana_program::log::sol_log_compute_units();
 
@@ -497,6 +499,7 @@ impl Bank {
         debug!("deposit share value: {}\nlibality share value: {}\nfees collected: {}\ninsurance collected: {}",
             asset_share_value, liability_share_value, group_fees_collected, insurance_fees_collected);
 
+        // Including compound interest
         self.asset_share_value = asset_share_value.into();
         self.liability_share_value = liability_share_value.into();
 
@@ -543,6 +546,52 @@ impl Bank {
                 fees_collected: group_fees_collected.to_num::<f64>(),
                 insurance_collected: insurance_fees_collected.to_num::<f64>(),
             });
+        }
+
+        Ok(())
+    }
+
+    pub fn deposit_spl_transfer<'info>(
+        &self,
+        amount: u64,
+        from: AccountInfo<'info>,
+        to: AccountInfo<'info>,
+        authority: AccountInfo<'info>,
+        maybe_mint: Option<&InterfaceAccount<'info, Mint>>,
+        program: AccountInfo<'info>,
+        remaining_accounts: &[AccountInfo<'info>],
+    ) -> MarginfiResult {
+        check!(to.key.eq(&self.liquidity_vault), MarginfiError::InvalidTransfer);
+
+        debug!("deposit_spl_transfer: amount: {} from {} to {}, auth {}",
+                amount, from.key, to.key, authority.key);
+
+        if let Some(mint) = maybe_mint {
+            spl_token_2022::onchain::invoke_transfer_checked(
+                program.key,
+                from,
+                mint.to_account_info(),
+                to,
+                authority,
+                remaining_accounts,
+                amount,
+                mint.decimals,
+                &[],
+            )?;
+        } else {
+            #[allow(deprecated)]
+            transfer(
+                CpiContext::new_with_signer(
+                    program,
+                    Transfer {
+                        from,
+                        to,
+                        authority,
+                    },
+                    &[],
+                ),
+                amount,
+            )?;
         }
 
         Ok(())
@@ -701,7 +750,7 @@ pub struct BankConfigOpt {
 
     pub operational_state: Option<BankOperationalState>,
 
-    pub initerest_rate_config: Option<InterestRateConfigOpt>,
+    pub interest_rate_config: Option<InterestRateConfigOpt>,
 
     pub risk_tier: Option<RiskTier>,
 
@@ -799,7 +848,7 @@ impl InterestRateConfig {
         set_if_some!(self.max_interest_rate, ir_config.max_interest_rate);
         set_if_some!(
             self.insurance_fee_fixed_apr,
-            ir_config.protocol_fixed_fee_apr
+            ir_config.insurance_fee_fixed_apr
         );
         set_if_some!(self.insurance_ir_fee, ir_config.insurance_ir_fee);
         set_if_some!(
@@ -927,6 +976,7 @@ impl InterestRateCalc {
         let plateau_ir: I80F48 = self.plateau_interest_rate;
         let max_ir: I80F48 = self.max_interest_rate;
 
+        // Different linear formulas
         if ur <= optimal_ur {
             ur.checked_div(optimal_ur)?.checked_mul(plateau_ir)
         } else {
@@ -1036,7 +1086,9 @@ fn calc_accrued_interest_payment_per_period(
     time_delta: u64,
     value: I80F48,
 ) -> Option<I80F48> {
-    let ir_per_period = apr.checked_mul(time_delta.into())?;
+    let ir_per_period = apr
+        .checked_mul(time_delta.into())?
+        .checked_div(SECONDS_PER_YEAR)?;
     let new_value = value.checked_mul(I80F48::ONE.checked_add(ir_per_period)?)?;
 
     Some(new_value)

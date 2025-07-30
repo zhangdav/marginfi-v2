@@ -4,6 +4,8 @@ use anchor_lang::prelude::*;
 pub enum MarginfiError {
     #[msg("Bank deposit capacity exceeded")] // 6003
     BankAssetCapacityExceeded,
+    #[msg("Invalid transfer")] // 6004
+    InvalidTransfer,
     #[msg("Invalid group config")] // 6015
     InvalidConfig,
     #[msg("Invalid bank utilization ratio")] // 6026
