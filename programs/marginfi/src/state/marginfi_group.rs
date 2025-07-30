@@ -2,7 +2,7 @@ use crate::borsh::{BorshDeserialize, BorshSerialize};
 use crate::constants::{
     ASSET_TAG_DEFAULT, FREEZE_SETTINGS, GROUP_FLAGS, MAX_ORACLE_KEYS,
     PERMISSIONLESS_BAD_DEBT_SETTLEMENT_FLAG, SECONDS_PER_YEAR,
-    TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE,
+    TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE, EMISSION_FLAGS,
 };
 use crate::errors::MarginfiError;
 use crate::events::{GroupEventHeader, LendingPoolBankAccrueInterestEvent};
@@ -696,6 +696,15 @@ impl Bank {
         }
     }
 
+    pub fn get_flag(&self, flag: u64) -> bool {
+        (self.flags & flag) == flag
+    }
+
+    pub(crate) fn override_emissions_flag(&mut self, flag: u64) {
+        assert!(Self::verify_group_flags(flag));
+        self.flags = flag;
+    }
+
     pub(crate) fn update_flag(&mut self, value: bool, flag: u64) {
         assert!(Self::verify_group_flags(flag));
 
@@ -704,6 +713,10 @@ impl Bank {
         } else {
             self.flags &= !flag;
         }
+    }
+
+    const fn verify_emissions_flags(flags: u64) -> bool {
+        flags & EMISSION_FLAGS == flags
     }
 
     const fn verify_group_flags(flags: u64) -> bool {
