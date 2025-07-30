@@ -8,6 +8,10 @@ pub enum MarginfiError {
     InvalidTransfer,
     #[msg("Invalid group config")] // 6015
     InvalidConfig,
+    #[msg("Bank paused")] // 6016
+    BankPaused,
+    #[msg("Bank is ReduceOnly mode")] // 6017
+    BankReduceOnly,
     #[msg("Invalid bank utilization ratio")] // 6026
     IllegalUtilizationRatio,
     #[msg("Bank borrow cap exceeded")] // 6027

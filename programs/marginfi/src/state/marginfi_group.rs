@@ -613,9 +613,11 @@ impl Bank {
         signer_seeds: &[&[&[u8]]],
         remaining_accounts: &[AccountInfo<'info>],
     ) -> MarginfiResult {
-        debug!("withdraw_spl_transfer: amount: {} from {} to {}, auth {}",
-            amount, from.key, to.key, authority.key);
-        
+        debug!(
+            "withdraw_spl_transfer: amount: {} from {} to {}, auth {}",
+            amount, from.key, to.key, authority.key
+        );
+
         if let Some(mint) = maybe_mint {
             spl_token_2022::onchain::invoke_transfer_checked(
                 program.key,
@@ -669,6 +671,29 @@ impl Bank {
         self.asset_share_value = new_share_value.into();
 
         Ok(())
+    }
+
+    // Risk Control
+    pub fn assert_operational_mode(
+        &self,
+        is_asset_or_liability_amount_increasing: Option<bool>,
+    ) -> Result<()> {
+        match self.config.operational_state {
+            BankOperationalState::Paused => Err(MarginfiError::BankPaused.into()),
+            BankOperationalState::Operational => Ok(()),
+            BankOperationalState::ReduceOnly => {
+                if let Some(is_asset_or_liability_amount_increasing) =
+                    is_asset_or_liability_amount_increasing
+                {
+                    check!(
+                        !is_asset_or_liability_amount_increasing,
+                        MarginfiError::BankReduceOnly
+                    );
+                }
+
+                Ok(())
+            }
+        }
     }
 
     pub(crate) fn update_flag(&mut self, value: bool, flag: u64) {
