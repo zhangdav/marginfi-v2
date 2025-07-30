@@ -18,6 +18,10 @@ pub enum MarginfiError {
     BankLiabilityCapacityExceeded,
     #[msg("Math error")] // 6062
     MathError,
+    #[msg("Arena groups can only support two banks")] // 6073
+    ArenaBankLimit,
+    #[msg("Arena groups cannot return to non-arena status")] // 6074
+    ArenaSettingCannotChange,
     #[msg("The Emode config was invalid")] // 6075
     BadEmodeConfig,
 }

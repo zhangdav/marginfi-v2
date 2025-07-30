@@ -21,6 +21,7 @@ use std::fmt::{Debug, Formatter};
 use type_layout::TypeLayout;
 
 pub const PROGRAM_FEES_ENABLED: u64 = 1;
+pub const ARENA_GROUP: u64 = 2;
 
 assert_struct_size!(MarginfiGroup, 1056);
 #[account(zero_copy)]
@@ -46,11 +47,99 @@ pub struct MarginfiGroup {
 }
 
 impl MarginfiGroup {
+    pub fn update_admin(&mut self, new_admin: Pubkey) {
+        if self.admin == new_admin {
+            msg!("No change to admin: {:?}", new_admin);
+            // do nothing
+        } else {
+            msg!("Set admin from {:?} to {:?}", self.admin, new_admin);
+            self.admin = new_admin;
+        }
+    }
+
+    pub fn update_emode_admin(&mut self, new_emode_admin: Pubkey) {
+        if self.emode_admin == new_emode_admin {
+            msg!("No change to emode admin: {:?}", new_emode_admin);
+            // do nothing
+        } else {
+            msg!(
+                "Set emode admin from {:?} to {:?}",
+                self.admin,
+                new_emode_admin
+            );
+            self.emode_admin = new_emode_admin;
+        }
+    }
+
+    /// Set the group parameters when initializing a group.
+    /// This should be called only when the group is first initialized.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_initial_configuration(&mut self, admin_pk: Pubkey) {
+        self.admin = admin_pk;
+        self.set_program_fee_enabled(true);
+    }
+
     pub fn get_group_bank_config(&self) -> GroupBankConfig {
         GroupBankConfig {
             program_fees: self.group_flags == PROGRAM_FEES_ENABLED,
         }
     }
+
+    pub fn set_program_fee_enabled(&mut self, fee_enabled: bool) {
+        if fee_enabled {
+            self.group_flags |= PROGRAM_FEES_ENABLED;
+        } else {
+            self.group_flags &= !PROGRAM_FEES_ENABLED;
+        }
+    }
+
+    /// Set the `ARENA_GROUP` if `is_arena` is true. If trying to set as arena and the group already
+    /// has more than two banks, fails. If trying to set an arena bank as non-arena, fails.
+    /// Force the MarginfiGroup to be bound to at most two Banks.
+    pub fn set_arena_group(&mut self, is_arena: bool) -> MarginfiResult {
+        // If enabling arena mode, ensure the group doesn't already have more than two banks.
+        if is_arena && self.banks > 2 {
+            return err!(MarginfiError::ArenaBankLimit);
+        }
+
+        // If the group is currently marked as arena, disallow switching it back to non-arena.
+        if self.is_arena_group() && !is_arena {
+            return err!(MarginfiError::ArenaSettingCannotChange);
+        }
+
+        if is_arena {
+            self.group_flags |= ARENA_GROUP;
+        } else {
+            self.group_flags &= !ARENA_GROUP;
+        }
+        Ok(())
+    }
+
+    /// True if program fees are enabled
+    pub fn program_fees_enabled(&self) -> bool {
+        (self.group_flags & PROGRAM_FEES_ENABLED) != 0
+    }
+
+    /// True if this is an arena group
+    pub fn is_arena_group(&self) -> bool {
+        (self.group_flags & ARENA_GROUP) != 0
+    }
+
+    // Increment the bank count by 1. If this is an arena group, which only supports two banks,
+    // errors if trying to add a third bank. If you managed to create 16,000 banks, congrats, does
+    // nothing.
+    pub fn add_bank(&mut self) -> MarginfiResult {
+        if self.is_arena_group() && self.banks >= 2 {
+            return err!(MarginfiError::ArenaBankLimit);
+        }
+        self.banks = self.banks.saturating_add(1);
+
+        let clock = Clock::get()?;
+        self.fee_state_cache.last_update = clock.unix_timestamp;
+
+        Ok(())
+    }
+
 }
 
 #[derive(
@@ -1125,6 +1214,33 @@ struct InterestRateStateChanges {
     protocol_fees_collected: I80F48,
 }
 
+/// We use a simple interest rate model that auto settles the accrued interest into the lending account balances.
+/// The plan is to move to a compound interest model in the future.
+///
+/// Simple interest rate model:
+/// - `P` - principal
+/// - `i` - interest rate (per second)
+/// - `t` - time (in seconds)
+///
+/// `P_t = P_0 * (1 + i) * t`
+///
+/// We use two interest rates, one for lending and one for borrowing.
+///
+/// Lending interest rate:
+/// - `i_l` - lending interest rate
+/// - `i` - base interest rate
+/// - `ur` - utilization rate
+///
+/// `i_l` = `i` * `ur`
+///
+/// Borrowing interest rate:
+/// - `i_b` - borrowing interest rate
+/// - `i` - base interest rate
+/// - `f_i` - interest rate fee
+/// - `f_f` - fixed fee
+///
+/// `i_b = i * (1 + f_i) + f_f`
+///
 fn calc_interest_rate_accrual_state_changes(
     time_delta: u64,
     total_assets_amount: I80F48,
