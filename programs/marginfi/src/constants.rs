@@ -21,6 +21,11 @@ pub(crate) const GROUP_FLAGS: u64 = PERMISSIONLESS_BAD_DEBT_SETTLEMENT_FLAG | FR
 
 pub const SECONDS_PER_YEAR: I80F48 = I80F48!(31_536_000);
 
+/// Due to real-world constraints, oracles using an age less than this value are typically too
+/// unreliable, and we want to restrict pools from picking an oracle that is effectively unusable
+pub const ORACLE_MIN_AGE: u16 = 30;
+pub const MAX_PYTH_ORACLE_AGE: u64 = 60;
+
 pub const MAX_EXP_10_I80F48: usize = 24;
 pub const EXP_10_I80F48: [I80F48; MAX_EXP_10_I80F48] = [
     I80F48!(1),                        // 10^0

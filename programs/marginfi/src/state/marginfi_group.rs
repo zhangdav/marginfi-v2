@@ -1,8 +1,8 @@
 use crate::borsh::{BorshDeserialize, BorshSerialize};
 use crate::constants::{
     ASSET_TAG_DEFAULT, EMISSION_FLAGS, FREEZE_SETTINGS, GROUP_FLAGS, MAX_ORACLE_KEYS,
-    PERMISSIONLESS_BAD_DEBT_SETTLEMENT_FLAG, PYTH_PUSH_MIGRATED, SECONDS_PER_YEAR,
-    TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE,
+    MAX_PYTH_ORACLE_AGE, ORACLE_MIN_AGE, PERMISSIONLESS_BAD_DEBT_SETTLEMENT_FLAG,
+    PYTH_PUSH_MIGRATED, SECONDS_PER_YEAR, TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE,
 };
 use crate::errors::MarginfiError;
 use crate::events::{GroupEventHeader, LendingPoolBankAccrueInterestEvent};
@@ -998,6 +998,14 @@ impl BankConfig {
         Ok(())
     }
 
+    pub fn validate_oracle_age(&self) -> MarginfiResult {
+        check! {
+            self.oracle_max_age >= ORACLE_MIN_AGE,
+            MarginfiError::InvalidOracleSetup
+        };
+        Ok(())
+    }
+
     pub fn usd_init_limit_active(&self) -> bool {
         self.total_asset_value_init_limit != TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE
     }
@@ -1025,6 +1033,14 @@ impl BankConfig {
             Some(bytes)
         } else {
             None
+        }
+    }
+
+    #[inline]
+    pub fn get_oracle_max_age(&self) -> u64 {
+        match (self.oracle_max_age, self.oracle_setup) {
+            (0, OracleSetup::PythPushOracle) => MAX_PYTH_ORACLE_AGE,
+            (n, _) => n as u64,
         }
     }
 }

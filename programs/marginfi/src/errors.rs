@@ -12,6 +12,8 @@ pub enum MarginfiError {
     BankPaused,
     #[msg("Bank is ReduceOnly mode")] // 6017
     BankReduceOnly,
+    #[msg("Invalid oracle setup")] // 6025
+    InvalidOracleSetup,
     #[msg("Invalid bank utilization ratio")] // 6026
     IllegalUtilizationRatio,
     #[msg("Bank borrow cap exceeded")] // 6027
