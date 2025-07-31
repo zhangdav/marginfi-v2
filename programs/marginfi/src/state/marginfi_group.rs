@@ -2,7 +2,9 @@ use crate::borsh::{BorshDeserialize, BorshSerialize};
 use crate::constants::{
     ASSET_TAG_DEFAULT, EMISSION_FLAGS, FREEZE_SETTINGS, GROUP_FLAGS, MAX_ORACLE_KEYS,
     MAX_PYTH_ORACLE_AGE, ORACLE_MIN_AGE, PERMISSIONLESS_BAD_DEBT_SETTLEMENT_FLAG,
-    PYTH_PUSH_MIGRATED, SECONDS_PER_YEAR, TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE,
+    PYTH_PUSH_MIGRATED, SECONDS_PER_YEAR, TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE, CLOSE_ENABLED_FLAG,
+    LIQUIDITY_VAULT_AUTHORITY_SEED, INSURANCE_VAULT_AUTHORITY_SEED, FEE_VAULT_AUTHORITY_SEED,
+    LIQUIDITY_VAULT_SEED, INSURANCE_VAULT_SEED, FEE_VAULT_SEED,
 };
 use crate::errors::MarginfiError;
 use crate::events::{GroupEventHeader, LendingPoolBankAccrueInterestEvent};
@@ -404,13 +406,16 @@ impl Bank {
             total_asset_shares: I80F48::ZERO.into(),
             last_update: current_timestamp,
             config,
-            flags: 0,
+            flags: CLOSE_ENABLED_FLAG,
             emissions_rate: 0,
             emissions_remaining: I80F48::ZERO.into(),
             emissions_mint: Pubkey::default(),
             collected_program_fees_outstanding: I80F48::ZERO.into(),
             emode: EmodeSettings::zeroed(),
             fees_destination_account: Pubkey::default(),
+            lending_position_count: 0,
+            borrowing_position_count: 0,
+            _padding_0: [0; 16],
             ..Default::default()
         }
     }
@@ -531,7 +536,6 @@ impl Bank {
         if !bypass_borrow_limit && shares.is_positive() && self.config.is_borrow_limit_active() {
             let total_liability_amount =
                 self.get_liability_amount(self.total_liability_shares.into())?;
-            self.get_liability_amount(self.total_liability_shares.into())?;
             let borrow_limit = I80F48::from_num(self.config.borrow_limit);
 
             if total_liability_amount >= borrow_limit {
@@ -609,7 +613,7 @@ impl Bank {
     }
 
     // Configures just the borrow and deposit limits, ignoring all other values
-    pub fn configure_unfrozen_files_only(&mut self, config: &BankConfigOpt) -> MarginfiResult {
+    pub fn configure_unfrozen_fields_only(&mut self, config: &BankConfigOpt) -> MarginfiResult {
         set_if_some!(self.config.deposit_limit, config.deposit_limit);
         set_if_some!(self.config.borrow_limit, config.borrow_limit);
 
@@ -1151,6 +1155,14 @@ impl BankConfig {
         (self.config_flags & PYTH_PUSH_MIGRATED) != 0
     }
 
+    pub fn update_config_flag(&mut self, value: bool, flag: u8) {
+        if value {
+            self.config_flags |= flag;
+        } else {
+            self.config_flags &= !flag;
+        }
+    }
+
     pub fn get_pyth_push_oracle_feed_id(&self) -> Option<&FeedId> {
         if matches!(
             self.oracle_setup,
@@ -1198,6 +1210,44 @@ pub struct BankConfigOpt {
     pub permission_bad_debt_settlement: Option<bool>,
 
     pub freeze_settings: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+pub enum BankVaultType {
+    Liquidity,
+    Insurance,
+    Fee,
+}
+
+impl BankVaultType {
+    pub fn get_seed(self) -> &'static [u8] {
+        match self {
+            BankVaultType::Liquidity => LIQUIDITY_VAULT_SEED.as_bytes(),
+            BankVaultType::Insurance => INSURANCE_VAULT_SEED.as_bytes(),
+            BankVaultType::Fee => FEE_VAULT_SEED.as_bytes(),
+        }
+    }
+
+    pub fn get_authority_seed(self) -> &'static [u8] {
+        match self {
+            BankVaultType::Liquidity => LIQUIDITY_VAULT_AUTHORITY_SEED.as_bytes(),
+            BankVaultType::Insurance => INSURANCE_VAULT_AUTHORITY_SEED.as_bytes(),
+            BankVaultType::Fee => FEE_VAULT_AUTHORITY_SEED.as_bytes(),
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! assert_eq_with_tolerance {
+    ($test_val:expr, $val:expr, $tolerance:expr) => {
+        assert!(
+            ($test_val - $val).abs() <= $tolerance,
+            "assertion failed: `({} - {}) <= {}`",
+            $test_val,
+            $val,
+            $tolerance
+        );
+    };
 }
 
 assert_struct_size!(InterestRateConfig, 240);
@@ -1346,6 +1396,111 @@ pub struct InterestRateConfigOpt {
     pub protocol_fixed_fee_apr: Option<WrappedI80F48>,
     pub protocol_ir_fee: Option<WrappedI80F48>,
     pub protocol_origination_fee: Option<WrappedI80F48>,
+}
+
+#[repr(C)]
+#[derive(AnchorDeserialize, AnchorSerialize, Debug, PartialEq, Eq)]
+pub struct BankConfigCompact {
+    pub asset_weight_init: WrappedI80F48,
+    pub asset_weight_maint: WrappedI80F48,
+
+    pub liability_weight_init: WrappedI80F48,
+    pub liability_weight_maint: WrappedI80F48,
+
+    pub deposit_limit: u64,
+
+    pub interest_rate_config: InterestRateConfigCompact,
+    pub operational_state: BankOperationalState,
+
+    pub borrow_limit: u64,
+
+    pub risk_tier: RiskTier,
+    pub asset_tag: u8,
+    pub config_flags: u8,
+    pub _pad0: [u8; 5],
+
+    pub total_asset_value_init_limit: u64,
+    pub oracle_max_age: u16,
+
+    pub oracle_max_confidence: u32,
+}
+
+impl Default for BankConfigCompact {
+    fn default() -> Self {
+        Self {
+            asset_weight_init: I80F48::ZERO.into(),
+            asset_weight_maint: I80F48::ZERO.into(),
+            liability_weight_init: I80F48::ZERO.into(),
+            liability_weight_maint: I80F48::ZERO.into(),
+            deposit_limit: 0,
+            borrow_limit: 0,
+            interest_rate_config: InterestRateConfigCompact::default(),
+            operational_state: BankOperationalState::Paused,
+            config_flags: PYTH_PUSH_MIGRATED,
+            _pad0: [0; 5],
+            risk_tier: RiskTier::Isolated,
+            asset_tag: ASSET_TAG_DEFAULT,
+            total_asset_value_init_limit: TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE,
+            oracle_max_age: 0,
+            oracle_max_confidence: 0,
+        }
+    }
+}
+
+impl From<BankConfigCompact> for BankConfig {
+    fn from(config: BankConfigCompact) -> Self {
+        let keys = [
+            Pubkey::default(),
+            Pubkey::default(),
+            Pubkey::default(),
+            Pubkey::default(),
+            Pubkey::default(),
+        ];
+        Self {
+            asset_weight_init: config.asset_weight_init,
+            asset_weight_maint: config.asset_weight_maint,
+            liability_weight_init: config.liability_weight_init,
+            liability_weight_maint: config.liability_weight_maint,
+            deposit_limit: config.deposit_limit,
+            interest_rate_config: config.interest_rate_config.into(),
+            operational_state: config.operational_state,
+            oracle_setup: OracleSetup::None,
+            oracle_keys: keys,
+            _pad0: [0; 6],
+            borrow_limit: config.borrow_limit,
+            risk_tier: config.risk_tier,
+            asset_tag: config.asset_tag,
+            config_flags: config.config_flags,
+            _pad1: [0; 5],
+            total_asset_value_init_limit: config.total_asset_value_init_limit,
+            oracle_max_age: config.oracle_max_age,
+            _padding0: [0; 2],
+            oracle_max_confidence: config.oracle_max_confidence,
+            _padding1: [0; 32],
+        }
+    }
+}
+
+impl From<BankConfig> for BankConfigCompact {
+    fn from(config: BankConfig) -> Self {
+        Self {
+            asset_weight_init: config.asset_weight_init,
+            asset_weight_maint: config.asset_weight_maint,
+            liability_weight_init: config.liability_weight_init,
+            liability_weight_maint: config.liability_weight_maint,
+            deposit_limit: config.deposit_limit,
+            interest_rate_config: config.interest_rate_config.into(),
+            operational_state: config.operational_state,
+            borrow_limit: config.borrow_limit,
+            risk_tier: config.risk_tier,
+            asset_tag: config.asset_tag,
+            config_flags: PYTH_PUSH_MIGRATED,
+            _pad0: [0; 5],
+            total_asset_value_init_limit: config.total_asset_value_init_limit,
+            oracle_max_age: config.oracle_max_age,
+            oracle_max_confidence: config.oracle_max_confidence,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1606,7 +1761,7 @@ pub struct Fees {
 #[derive(Default, Debug, AnchorDeserialize, AnchorSerialize, PartialEq, Eq)]
 pub struct InterestRateConfigCompact {
     // Curve Params
-    pub optimal_uitilization_rate: WrappedI80F48,
+    pub optimal_utilization_rate: WrappedI80F48,
     pub plateau_interest_rate: WrappedI80F48,
     pub max_interest_rate: WrappedI80F48,
 
@@ -1621,7 +1776,7 @@ pub struct InterestRateConfigCompact {
 impl From<InterestRateConfigCompact> for InterestRateConfig {
     fn from(ir_config: InterestRateConfigCompact) -> Self {
         InterestRateConfig {
-            optimal_utilization_rate: ir_config.optimal_uitilization_rate,
+            optimal_utilization_rate: ir_config.optimal_utilization_rate,
             plateau_interest_rate: ir_config.plateau_interest_rate,
             max_interest_rate: ir_config.max_interest_rate,
             insurance_fee_fixed_apr: ir_config.insurance_fee_fixed_apr,
@@ -1638,7 +1793,7 @@ impl From<InterestRateConfigCompact> for InterestRateConfig {
 impl From<InterestRateConfig> for InterestRateConfigCompact {
     fn from(ir_config: InterestRateConfig) -> Self {
         InterestRateConfigCompact {
-            optimal_uitilization_rate: ir_config.optimal_utilization_rate,
+            optimal_utilization_rate: ir_config.optimal_utilization_rate,
             plateau_interest_rate: ir_config.plateau_interest_rate,
             max_interest_rate: ir_config.max_interest_rate,
             insurance_fee_fixed_apr: ir_config.insurance_fee_fixed_apr,

@@ -6,6 +6,14 @@ pub const MAX_ORACLE_KEYS: usize = 5;
 pub const ASSET_TAG_DEFAULT: u8 = 0;
 pub const TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE: u64 = 0;
 
+pub const LIQUIDITY_VAULT_AUTHORITY_SEED: &str = "liquidity_vault_auth";
+pub const INSURANCE_VAULT_AUTHORITY_SEED: &str = "insurance_vault_auth";
+pub const FEE_VAULT_AUTHORITY_SEED: &str = "fee_vault_auth";
+
+pub const LIQUIDITY_VAULT_SEED: &str = "liquidity_vault";
+pub const INSURANCE_VAULT_SEED: &str = "insurance_vault";
+pub const FEE_VAULT_SEED: &str = "fee_vault";
+
 // Anyone can try to settle bad debts in an account without permission or administrator status
 pub const PERMISSIONLESS_BAD_DEBT_SETTLEMENT_FLAG: u64 = 1 << 2;
 
@@ -13,6 +21,7 @@ pub const PYTH_PUSH_MIGRATED: u8 = 1 << 0;
 
 // Some of the Bank's configurations are frozen and cannot be changed.
 pub const FREEZE_SETTINGS: u64 = 1 << 3;
+pub const CLOSE_ENABLED_FLAG: u64 = 1 << 4;
 
 pub const EMISSION_FLAG_BORROW_ACTIVE: u64 = 1 << 0;
 pub const EMISSION_FLAG_LENDING_ACTIVE: u64 = 1 << 1;
