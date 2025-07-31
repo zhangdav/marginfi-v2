@@ -1,10 +1,10 @@
 use crate::borsh::{BorshDeserialize, BorshSerialize};
 use crate::constants::{
-    ASSET_TAG_DEFAULT, EMISSION_FLAGS, FREEZE_SETTINGS, GROUP_FLAGS, MAX_ORACLE_KEYS,
+    ASSET_TAG_DEFAULT, CLOSE_ENABLED_FLAG, EMISSION_FLAGS, FEE_VAULT_AUTHORITY_SEED,
+    FEE_VAULT_SEED, FREEZE_SETTINGS, GROUP_FLAGS, INSURANCE_VAULT_AUTHORITY_SEED,
+    INSURANCE_VAULT_SEED, LIQUIDITY_VAULT_AUTHORITY_SEED, LIQUIDITY_VAULT_SEED, MAX_ORACLE_KEYS,
     MAX_PYTH_ORACLE_AGE, ORACLE_MIN_AGE, PERMISSIONLESS_BAD_DEBT_SETTLEMENT_FLAG,
-    PYTH_PUSH_MIGRATED, SECONDS_PER_YEAR, TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE, CLOSE_ENABLED_FLAG,
-    LIQUIDITY_VAULT_AUTHORITY_SEED, INSURANCE_VAULT_AUTHORITY_SEED, FEE_VAULT_AUTHORITY_SEED,
-    LIQUIDITY_VAULT_SEED, INSURANCE_VAULT_SEED, FEE_VAULT_SEED,
+    PYTH_PUSH_MIGRATED, SECONDS_PER_YEAR, TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE,
 };
 use crate::errors::MarginfiError;
 use crate::events::{GroupEventHeader, LendingPoolBankAccrueInterestEvent};
@@ -1524,7 +1524,7 @@ pub struct InterestRateCalc {
 }
 
 impl InterestRateCalc {
-/// Return interest rate charged to borrowers and to depositors.
+    /// Return interest rate charged to borrowers and to depositors.
     /// Rate is denominated in APR (0-).
     ///
     /// Return ComputedInterestRates
@@ -1719,6 +1719,7 @@ fn calc_fee_rate(base_rate: I80F48, rate_fees: I80F48, fixed_fees: I80F48) -> Op
 
 /// Calculates the accrued interest payment per period `time_delta` in a principal value `value` for interest rate (in APR) `arp`.
 /// Result is the new principal value.
+/// Formula: New Principal = Principal * (1 + APR * time_delta / SECONDS_PER_YEAR)
 fn calc_accrued_interest_payment_per_period(
     apr: I80F48,
     time_delta: u64,
@@ -1734,6 +1735,7 @@ fn calc_accrued_interest_payment_per_period(
 
 /// Calculates the interest payment for a given period `time_delta` in a principal value `value` for interest rate (in APR) `arp`.
 /// Result is the interest payment.
+/// Formula: Interest = Principal * APR * (time_delta / SECONDS_PER_YEAR)
 fn calc_interest_payment_for_period(apr: I80F48, time_delta: u64, value: I80F48) -> Option<I80F48> {
     if apr.is_zero() {
         return Some(I80F48::ZERO);
@@ -1802,5 +1804,97 @@ impl From<InterestRateConfig> for InterestRateConfigCompact {
             protocol_ir_fee: ir_config.protocol_ir_fee,
             protocol_origination_fee: ir_config.protocol_origination_fee,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use crate::constants::{PROTOCOL_FEE_FIXED_DEFAULT, PROTOCOL_FEE_RATE_DEFAULT};
+
+    use super::*;
+    use fixed_macro::types::I80F48;
+
+    #[test]
+    /// Tests that the interest payment for a 1 year period with 100% APR is 1.
+    fn interest_payment_100apr_1year() {
+        let apr = I80F48::ONE;
+        let time_delta = 31_536_000; // 1 year
+        let value = I80F48::ONE;
+
+        assert_eq_with_tolerance!(
+            calc_interest_payment_for_period(apr, time_delta, value).unwrap(),
+            I80F48::ONE,
+            I80F48!(0.001)
+        )
+    }
+
+    /// Tests that the interest payment for a 1 year period with 50% APR is 0.5.
+    #[test]
+    fn interest_payment_50apr_1year() {
+        let apr = I80F48::from_num(0.5);
+        let time_delta = 31_536_000; // 1 year
+        let value = I80F48::ONE;
+
+        assert_eq_with_tolerance!(
+            calc_interest_payment_for_period(apr, time_delta, value).unwrap(),
+            I80F48::from_num(0.5),
+            I80F48!(0.001)
+        );
+    }
+    /// P: 1_000_000
+    /// Apr: 12%
+    /// Time: 1 second
+    #[test]
+    fn interest_payment_12apr_1second() {
+        let apr = I80F48!(0.12);
+        let time_delta = 1;
+        let value = I80F48!(1_000_000);
+
+        assert_eq_with_tolerance!(
+            calc_interest_payment_for_period(apr, time_delta, value).unwrap(),
+            I80F48!(0.0038),
+            I80F48!(0.001)
+        );
+    }
+
+    #[test]
+    /// apr: 100%
+    /// time: 1 year
+    /// principal: 2
+    /// expected: 4
+    fn accrued_interest_apr100_year1() {
+        assert_eq_with_tolerance!(
+            calc_accrued_interest_payment_per_period(I80F48!(1), 31_536_000, I80F48!(2)).unwrap(),
+            I80F48!(4),
+            I80F48!(0.001)
+        );
+    }
+
+    #[test]
+    /// apr: 50%
+    /// time: 1 year
+    /// principal: 2
+    /// expected: 3
+    fn accrued_interest_apr50_year1() {
+        assert_eq_with_tolerance!(
+            calc_accrued_interest_payment_per_period(I80F48!(0.5), 31_536_000, I80F48!(2)).unwrap(),
+            I80F48!(3),
+            I80F48!(0.001)
+        );
+    }
+
+    #[test]
+    /// apr: 12%
+    /// time: 1 second
+    /// principal: 1_000_000
+    /// expected: 1_038
+    fn accrued_interest_apr12_year1() {
+        assert_eq_with_tolerance!(
+            calc_accrued_interest_payment_per_period(I80F48!(0.12), 1, I80F48!(1_000_000)).unwrap(),
+            I80F48!(1_000_000.0038),
+            I80F48!(0.001)
+        );
     }
 }

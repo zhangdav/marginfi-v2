@@ -14,6 +14,11 @@ pub const LIQUIDITY_VAULT_SEED: &str = "liquidity_vault";
 pub const INSURANCE_VAULT_SEED: &str = "insurance_vault";
 pub const FEE_VAULT_SEED: &str = "fee_vault";
 
+/// For testing, this is a typical program fee.
+pub const PROTOCOL_FEE_RATE_DEFAULT: I80F48 = I80F48!(0.025);
+/// For testing, this is a typical program fee.
+pub const PROTOCOL_FEE_FIXED_DEFAULT: I80F48 = I80F48!(0.01);
+
 // Anyone can try to settle bad debts in an account without permission or administrator status
 pub const PERMISSIONLESS_BAD_DEBT_SETTLEMENT_FLAG: u64 = 1 << 2;
 
