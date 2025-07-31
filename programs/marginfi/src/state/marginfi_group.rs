@@ -88,6 +88,48 @@ impl MarginfiGroup {
         }
     }
 
+    pub fn update_curve_admin(&mut self, new_curve_admin: Pubkey) {
+        if self.delegate_curve_admin == new_curve_admin {
+            msg!("No change to curve admin: {:?}", new_curve_admin);
+            // do nothing
+        } else {
+            msg!(
+                "Set curve admin from {:?} to {:?}",
+                self.delegate_curve_admin,
+                new_curve_admin
+            );
+            self.delegate_curve_admin = new_curve_admin;
+        }
+    }
+
+    pub fn update_limit_admin(&mut self, new_limit_admin: Pubkey) {
+        if self.delegate_limit_admin == new_limit_admin {
+            msg!("No change to limit admin: {:?}", new_limit_admin);
+            // do nothing
+        } else {
+            msg!(
+                "Set limit admin from {:?} to {:?}",
+                self.delegate_limit_admin,
+                new_limit_admin
+            );
+            self.delegate_limit_admin = new_limit_admin;
+        }
+    }
+
+    pub fn update_emissions_admin(&mut self, new_emissions_admin: Pubkey) {
+        if self.delegate_emissions_admin == new_emissions_admin {
+            msg!("No change to emissions admin: {:?}", new_emissions_admin);
+            // do nothing
+        } else {
+            msg!(
+                "Set emissions admin from {:?} to {:?}",
+                self.delegate_emissions_admin,
+                new_emissions_admin
+            );
+            self.delegate_emissions_admin = new_emissions_admin;
+        }
+    }
+
     /// Set the group parameters when initializing a group.
     /// This should be called only when the group is first initialized.
     #[allow(clippy::too_many_arguments)]
@@ -1558,4 +1600,52 @@ pub struct Fees {
     pub group_fee_fixed: I80F48,
     pub protocol_fee_rate: I80F48,
     pub protocol_fee_fixed: I80F48,
+}
+
+#[repr(C)]
+#[derive(Default, Debug, AnchorDeserialize, AnchorSerialize, PartialEq, Eq)]
+pub struct InterestRateConfigCompact {
+    // Curve Params
+    pub optimal_uitilization_rate: WrappedI80F48,
+    pub plateau_interest_rate: WrappedI80F48,
+    pub max_interest_rate: WrappedI80F48,
+
+    // Fees
+    pub insurance_fee_fixed_apr: WrappedI80F48,
+    pub insurance_ir_fee: WrappedI80F48,
+    pub protocol_fixed_fee_apr: WrappedI80F48,
+    pub protocol_ir_fee: WrappedI80F48,
+    pub protocol_origination_fee: WrappedI80F48,
+}
+
+impl From<InterestRateConfigCompact> for InterestRateConfig {
+    fn from(ir_config: InterestRateConfigCompact) -> Self {
+        InterestRateConfig {
+            optimal_utilization_rate: ir_config.optimal_uitilization_rate,
+            plateau_interest_rate: ir_config.plateau_interest_rate,
+            max_interest_rate: ir_config.max_interest_rate,
+            insurance_fee_fixed_apr: ir_config.insurance_fee_fixed_apr,
+            insurance_ir_fee: ir_config.insurance_ir_fee,
+            protocol_fixed_fee_apr: ir_config.protocol_fixed_fee_apr,
+            protocol_ir_fee: ir_config.protocol_ir_fee,
+            protocol_origination_fee: ir_config.protocol_origination_fee,
+            _padding0: [0; 16],
+            _padding1: [[0; 32]; 3],
+        }
+    }
+}
+
+impl From<InterestRateConfig> for InterestRateConfigCompact {
+    fn from(ir_config: InterestRateConfig) -> Self {
+        InterestRateConfigCompact {
+            optimal_uitilization_rate: ir_config.optimal_utilization_rate,
+            plateau_interest_rate: ir_config.plateau_interest_rate,
+            max_interest_rate: ir_config.max_interest_rate,
+            insurance_fee_fixed_apr: ir_config.insurance_fee_fixed_apr,
+            insurance_ir_fee: ir_config.insurance_ir_fee,
+            protocol_fixed_fee_apr: ir_config.protocol_fixed_fee_apr,
+            protocol_ir_fee: ir_config.protocol_ir_fee,
+            protocol_origination_fee: ir_config.protocol_origination_fee,
+        }
+    }
 }
