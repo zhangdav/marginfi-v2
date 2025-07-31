@@ -1,8 +1,10 @@
 use super::price::OraclePriceFeedAdapter;
 use crate::constants::EXP_10_I80F48;
+use crate::debug;
 use crate::math_error;
 use crate::prelude::MarginfiResult;
 use crate::state::marginfi_group::{Bank, WrappedI80F48};
+use crate::state::price::OraclePriceType;
 use crate::{assert_struct_align, assert_struct_size};
 use anchor_lang::prelude::*;
 use bytemuck::{Pod, Zeroable};
@@ -65,4 +67,30 @@ pub fn calc_value(
         .ok_or_else(math_error!())?;
 
     Ok(value)
+}
+
+#[derive(Copy, Clone)]
+pub enum RequirementType {
+    Initial,
+    Maintenance,
+    Equity,
+}
+
+impl RequirementType {
+    /// Get oracle price type for the requirement type.
+    ///
+    /// Initial and equity requirements use the time weighted price feed.
+    /// Maintenance requirement uses the real time price feed, as its more accurate for triggering liquidations.
+    /// Choosing the right oracle price type for different uses (stable vs. accurate)
+    pub fn get_oracle_price_type(&self) -> OraclePriceType {
+        match self {
+            RequirementType::Initial | RequirementType::Equity => OraclePriceType::TimeWeighted,
+            RequirementType::Maintenance => OraclePriceType::RealTime,
+        }
+    }
+}
+
+pub enum BalanceSide {
+    Assets,
+    Liabilities,
 }

@@ -16,6 +16,24 @@ pub enum MarginfiError {
     IllegalUtilizationRatio,
     #[msg("Bank borrow cap exceeded")] // 6027
     BankLiabilityCapacityExceeded,
+    #[msg("Oracle is not set")] // 6031
+    OracleNotSetup,
+    #[msg("Stake pool validation failed: check the stake pool, mint, or sol pool")] // 6048
+    StakePoolValidationFailed,
+    #[msg("Oracle error: wrong number of accounts")] // 6051
+    WrongNumberOfOracleAccounts,
+    #[msg("Oracle error: wrong account keys")] // 6052
+    WrongOracleAccountKeys,
+    #[msg("Pyth Push oracle: wrong account owner")] // 6053
+    PythPushWrongAccountOwner,
+    #[msg("Pyth Push oracle: mismatched feed id")] // 6055
+    PythPushMismatchedFeedId,
+    #[msg("Switchboard oracle: wrong account owner")] // 6059
+    SwitchboardWrongAccountOwner,
+    #[msg("Pyth Push oracle: invalid account")] // 6060
+    PythPushInvalidAccount,
+    #[msg("Switchboard oracle: invalid account")] // 6061
+    SwitchboardInvalidAccount,
     #[msg("Math error")] // 6062
     MathError,
     #[msg("Arena groups can only support two banks")] // 6073

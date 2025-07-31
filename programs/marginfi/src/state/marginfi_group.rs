@@ -1,22 +1,23 @@
 use crate::borsh::{BorshDeserialize, BorshSerialize};
 use crate::constants::{
-    ASSET_TAG_DEFAULT, FREEZE_SETTINGS, GROUP_FLAGS, MAX_ORACLE_KEYS,
-    PERMISSIONLESS_BAD_DEBT_SETTLEMENT_FLAG, SECONDS_PER_YEAR,
-    TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE, EMISSION_FLAGS,
+    ASSET_TAG_DEFAULT, EMISSION_FLAGS, FREEZE_SETTINGS, GROUP_FLAGS, MAX_ORACLE_KEYS,
+    PERMISSIONLESS_BAD_DEBT_SETTLEMENT_FLAG, PYTH_PUSH_MIGRATED, SECONDS_PER_YEAR,
+    TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE,
 };
 use crate::errors::MarginfiError;
 use crate::events::{GroupEventHeader, LendingPoolBankAccrueInterestEvent};
 use crate::prelude::MarginfiResult;
 use crate::set_if_some;
 use crate::state::emode::EmodeSettings;
-use crate::state::marginfi_account::calc_value;
-use crate::state::price::OracleSetup;
+use crate::state::marginfi_account::{calc_value, BalanceSide, RequirementType};
+use crate::state::price::{OraclePriceFeedAdapter, OracleSetup};
 use crate::{assert_struct_align, assert_struct_size, check};
 use crate::{debug, math_error};
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::*;
 use bytemuck::{Pod, Zeroable};
 use fixed::types::I80F48;
+use pyth_solana_receiver_sdk::price_update::FeedId;
 use std::fmt::{Debug, Formatter};
 use type_layout::TypeLayout;
 
@@ -139,7 +140,6 @@ impl MarginfiGroup {
 
         Ok(())
     }
-
 }
 
 #[derive(
@@ -820,45 +820,68 @@ assert_struct_align!(BankConfig, 8);
     Debug, Clone, Copy, AnchorDeserialize, AnchorSerialize, Zeroable, Pod, PartialEq, Eq, TypeLayout,
 )]
 pub struct BankConfig {
-    // Initial mortgage rate
     pub asset_weight_init: WrappedI80F48,
-    // Maintaining collateral ratio
     pub asset_weight_maint: WrappedI80F48,
 
-    // Initial calculation weight of loan
     pub liability_weight_init: WrappedI80F48,
-    // Borrowing to maintain weight
     pub liability_weight_maint: WrappedI80F48,
 
-    // The current total deposit limit of the asset market
     pub deposit_limit: u64,
 
     pub interest_rate_config: InterestRateConfig,
-    // Market status (e.g. open/closed/withdrawal only)
     pub operational_state: BankOperationalState,
 
     pub oracle_setup: OracleSetup,
     pub oracle_keys: [Pubkey; MAX_ORACLE_KEYS],
 
-    pub _pad0: [u8; 6],
+    // Note: Pubkey is aligned 1, so borrow_limit is the first aligned-8 value after deposit_limit
+    pub _pad0: [u8; 6], // Bank state (1) + Oracle Setup (1) + 6 = 8
 
-    // Total loan limit
     pub borrow_limit: u64,
 
-    // Indicates whether the asset can be used across portfolios
     pub risk_tier: RiskTier,
 
-    // Asset Type Tags
+    /// Determines what kinds of assets users of this bank can interact with.
+    /// Options:
+    /// * ASSET_TAG_DEFAULT (0) - A regular asset that can be comingled with any other regular asset
+    ///   or with `ASSET_TAG_SOL`
+    /// * ASSET_TAG_SOL (1) - Accounts with a SOL position can comingle with **either**
+    /// `ASSET_TAG_DEFAULT` or `ASSET_TAG_STAKED` positions, but not both
+    /// * ASSET_TAG_STAKED (2) - Staked SOL assets. Accounts with a STAKED position can only deposit
+    /// other STAKED assets or SOL (`ASSET_TAG_SOL`) and can only borrow SOL
     pub asset_tag: u8,
 
-    pub _pad1: [u8; 6],
+    /// Flags for various config options
+    /// * 1 - Always set if bank created in 0.1.4 or later, or if migrated to the new pyth
+    ///   oracle setup from a prior version. Not set in 0.1.3 or earlier banks using pyth that have
+    ///   not yet migrated. Does nothing for banks that use switchboard.
+    /// * 2, 4, 8, 16, etc - reserved for future use.
+    pub config_flags: u8,
 
-    // Limit the maximum value of the asset used for collateral
+    pub _pad1: [u8; 5],
+
+    /// USD denominated limit for calculating asset value for initialization margin requirements.
+    /// Example, if total SOL deposits are equal to $1M and the limit it set to $500K,
+    /// then SOL assets will be discounted by 50%.
+    ///
+    /// In other words the max value of liabilities that can be backed by the asset is $500K.
+    /// This is useful for limiting the damage of orcale attacks.
+    ///
+    /// Value is UI USD value, for example value 100 -> $100
     pub total_asset_value_init_limit: u64,
 
+    /// Time window in seconds for the oracle price feed to be considered live.
     pub oracle_max_age: u16,
 
-    pub _padding0: [u8; 6],
+    // pad to next 4-byte alignment to meet u32's requirements.
+    pub _padding0: [u8; 2],
+
+    /// From 0-100%, if the confidence exceeds this value, the oracle is considered invalid. Note:
+    /// the confidence adjustment is capped at 5% regardless of this value.
+    /// * 0 falls back to using the default 10% instead, i.e., U32_MAX_DIV_10
+    /// * A %, as u32, e.g. 100% = u32::MAX, 50% = u32::MAX/2, etc.
+    pub oracle_max_confidence: u32,
+
     pub _padding1: [u8; 32],
 }
 
@@ -879,16 +902,54 @@ impl Default for BankConfig {
             _pad0: [0; 6],
             risk_tier: RiskTier::Isolated,
             asset_tag: ASSET_TAG_DEFAULT,
-            _pad1: [0; 6],
+            config_flags: 0,
+            _pad1: [0; 5],
             total_asset_value_init_limit: TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE,
             oracle_max_age: 0,
-            _padding0: [0; 6],
+            _padding0: [0; 2],
+            oracle_max_confidence: 0,
             _padding1: [0; 32],
         }
     }
 }
 
 impl BankConfig {
+    // Returns the asset and liability weights of a Bank under a specified risk type
+    #[inline]
+    pub fn get_weights(&self, req_type: RequirementType) -> (I80F48, I80F48) {
+        match req_type {
+            RequirementType::Initial => (
+                self.asset_weight_init.into(),
+                self.liability_weight_init.into(),
+            ),
+            RequirementType::Maintenance => (
+                self.asset_weight_maint.into(),
+                self.liability_weight_maint.into(),
+            ),
+            RequirementType::Equity => (I80F48::ONE, I80F48::ONE),
+        }
+    }
+
+    // More suitable for item-by-item calls or for use in certain directional conditional logic
+    #[inline]
+    pub fn get_weight(
+        &self,
+        requirement_type: RequirementType,
+        balance_side: BalanceSide,
+    ) -> I80F48 {
+        match (requirement_type, balance_side) {
+            (RequirementType::Initial, BalanceSide::Assets) => self.asset_weight_init.into(),
+            (RequirementType::Initial, BalanceSide::Liabilities) => {
+                self.liability_weight_init.into()
+            }
+            (RequirementType::Maintenance, BalanceSide::Assets) => self.asset_weight_maint.into(),
+            (RequirementType::Maintenance, BalanceSide::Liabilities) => {
+                self.liability_weight_maint.into()
+            }
+            (RequirementType::Equity, _) => I80F48::ONE,
+        }
+    }
+
     pub fn validate(&self) -> MarginfiResult {
         let asset_init_w = I80F48::from(self.asset_weight_init);
         let asset_maint_w = I80F48::from(self.asset_weight_maint);
@@ -923,6 +984,20 @@ impl BankConfig {
         Ok(())
     }
 
+    /// * lst_mint, stake_pool, sol_pool - required only if configuring
+    ///   `OracleSetup::StakedWithPythPush` on initial setup. If configuring a staked bank after
+    ///   initial setup, can be omitted
+    pub fn validate_oracle_setup(
+        &self,
+        ais: &[AccountInfo],
+        lst_mint: Option<Pubkey>,
+        stake_pool: Option<Pubkey>,
+        sol_pool: Option<Pubkey>,
+    ) -> MarginfiResult {
+        OraclePriceFeedAdapter::validate_bank_config(self, ais, lst_mint, stake_pool, sol_pool)?;
+        Ok(())
+    }
+
     pub fn usd_init_limit_active(&self) -> bool {
         self.total_asset_value_init_limit != TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE
     }
@@ -935,6 +1010,22 @@ impl BankConfig {
     #[inline]
     pub fn is_borrow_limit_active(&self) -> bool {
         self.borrow_limit != u64::MAX
+    }
+
+    pub fn is_pyth_push_migrated(&self) -> bool {
+        (self.config_flags & PYTH_PUSH_MIGRATED) != 0
+    }
+
+    pub fn get_pyth_push_oracle_feed_id(&self) -> Option<&FeedId> {
+        if matches!(
+            self.oracle_setup,
+            OracleSetup::PythPushOracle | OracleSetup::StakedWithPythPush
+        ) {
+            let bytes: &[u8; 32] = self.oracle_keys[0].as_ref().try_into().unwrap();
+            Some(bytes)
+        } else {
+            None
+        }
     }
 }
 
@@ -1074,11 +1165,28 @@ pub enum BankOperationalState {
 unsafe impl Zeroable for BankOperationalState {}
 unsafe impl Pod for BankOperationalState {}
 
+#[cfg(feature = "client")]
+impl Display for BankOperationalState {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BankOperationalState::Paused => write!(f, "Paused"),
+            BankOperationalState::Operational => write!(f, "Operational"),
+            BankOperationalState::ReduceOnly => write!(f, "ReduceOnly"),
+        }
+    }
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, AnchorDeserialize, AnchorSerialize, PartialEq, Eq, Default)]
 pub enum RiskTier {
     #[default]
     Collateral = 0,
+    /// ## Isolated Risk
+    /// Assets in this trance can be borrowed only in isolation.
+    /// They can't be borrowed together with other assets.
+    ///
+    /// For example, if users has USDC, and wants to borrow XYZ which is isolated,
+    /// they can't borrow XYZ together with SOL, only XYZ alone.
     Isolated = 1,
 }
 unsafe impl Zeroable for RiskTier {}
@@ -1120,7 +1228,6 @@ pub struct InterestRateCalc {
 impl InterestRateCalc {
     /// Return interest rate charged to borrowers and to depositors.
     /// Rate is denominated in APR (0-).
-    ///
     /// Return ComputedInterestRates
     pub fn calc_interest_rate(&self, utilization_ratio: I80F48) -> Option<ComputedInterestRates> {
         let Fees {
