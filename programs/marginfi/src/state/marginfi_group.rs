@@ -8,6 +8,7 @@ use crate::errors::MarginfiError;
 use crate::events::{GroupEventHeader, LendingPoolBankAccrueInterestEvent};
 use crate::prelude::MarginfiResult;
 use crate::set_if_some;
+use crate::state::bank_cache::{BankCache, ComputedInterestRates};
 use crate::state::emode::EmodeSettings;
 use crate::state::marginfi_account::{calc_value, BalanceSide, RequirementType};
 use crate::state::price::{OraclePriceFeedAdapter, OracleSetup};
@@ -28,21 +29,36 @@ assert_struct_size!(MarginfiGroup, 1056);
 #[account(zero_copy)]
 #[derive(Default, Debug, PartialEq, Eq, TypeLayout)]
 pub struct MarginfiGroup {
-    // Protocol administrator address (super authority of the platform)
-    // Allows updating configuration, clearing settings, upgrading permissions, etc.
+    /// Broadly able to modify anything, and can set/remove other admins at will.
     pub admin: Pubkey,
-    // Indicates the current market status (such as whether to suspend lending or enable certain functions)
+    /// Bitmask for group settings flags.
+    /// * 0: `PROGRAM_FEES_ENABLED` If set, program-level fees are enabled.
+    /// * 1: `ARENA_GROUP` If set, this is an arena group, which can only have two banks
+    /// * Bits 1-63: Reserved for future use.
     pub group_flags: u64,
+    /// Caches information from the global `FeeState` so the FeeState can be omitted on certain ixes
     pub fee_state_cache: FeeStateCache,
-    // Number of banks/markets currently enabled (and possibly number of token pairs)
+    // For groups initialized in versions 0.1.2 or greater (roughly the public launch of Arena),
+    // this is an authoritative count of the number of banks under this group. For groups
+    // initialized prior to 0.1.2, a non-authoritative count of the number of banks initiated after
+    // 0.1.2 went live.
     pub banks: u16,
-    // Together with banks: u16, it makes up 8-byte alignment, which is convenient for zero-copy and #[repr(C)]
     pub pad0: [u8; 6],
-    // Administrators who specifically control eMode (efficient mode, such as relaxing collateral factors when borrowing similar assets)
+    /// This admin can configure collateral ratios above (but not below) the collateral ratio of
+    /// certain banks , e.g. allow SOL to count as 90% collateral when borrowing an LST instead of
+    /// the default rate.
     pub emode_admin: Pubkey,
+    /// Can modify the fields in `config.interest_rate_config` but nothing else, for every bank under
+    /// this group
+    pub delegate_curve_admin: Pubkey,
+    /// Can modify the `deposit_limit`, `borrow_limit`, `total_asset_value_init_limit` but nothing
+    /// else, for every bank under this group
+    pub delegate_limit_admin: Pubkey,
+    /// Can modify the emissions `flags`, `emissions_rate` and `emissions_mint`, but nothing else,
+    /// for every bank under this group
+    pub delegate_emissions_admin: Pubkey,
 
-    // TODO:
-    pub _padding_0: [[u64; 2]; 24],
+    pub _padding_0: [[u64; 2]; 18],
     pub _padding_1: [[u64; 2]; 32],
     pub _padding_4: u64,
 }
@@ -223,7 +239,9 @@ pub struct Bank {
 
     pub group: Pubkey,
 
-    pub _pad0: [u8; 7],
+    // Note: The padding is here, not after mint_decimals. Pubkey has alignment 1, so those 32
+    // bytes can cross the alignment 8 threshold, but WrappedI80F48 has alignment 8 and cannot
+    pub _pad0: [u8; 7], // 1x u8 + 7 = 8
 
     pub asset_share_value: WrappedI80F48,
     pub liability_share_value: WrappedI80F48,
@@ -232,26 +250,24 @@ pub struct Bank {
     pub liquidity_vault_bump: u8,
     pub liquidity_vault_authority_bump: u8,
 
-    // For deposit: a portion of the assets collected by the protocol from interest,
-    // penalties or other sources as risk buffer funds
     pub insurance_vault: Pubkey,
     pub insurance_vault_bump: u8,
     pub insurance_vault_authority_bump: u8,
 
-    pub _pad1: [u8; 4],
+    pub _pad1: [u8; 4], // 4x u8 + 4 = 8
 
-    // Insurance fee that has not yet been withdrawn
+    /// Fees collected and pending withdraw for the `insurance_vault`
     pub collected_insurance_fees_outstanding: WrappedI80F48,
 
     pub fee_vault: Pubkey,
     pub fee_vault_bump: u8,
     pub fee_vault_authority_bump: u8,
 
-    pub _pad2: [u8; 6],
+    pub _pad2: [u8; 6], // 2x u8 + 6 = 8
 
+    /// Fees collected and pending withdraw for the `fee_vault`
     pub collected_group_fees_outstanding: WrappedI80F48,
 
-    // The total number of shares currently lent/deposited by all users
     pub total_liability_shares: WrappedI80F48,
     pub total_asset_shares: WrappedI80F48,
 
@@ -259,19 +275,49 @@ pub struct Bank {
 
     pub config: BankConfig,
 
+    /// Bank Config Flags
+    ///
+    /// - EMISSIONS_FLAG_BORROW_ACTIVE: 1
+    /// - EMISSIONS_FLAG_LENDING_ACTIVE: 2
+    /// - PERMISSIONLESS_BAD_DEBT_SETTLEMENT: 4
+    /// - FREEZE_SETTINGS: 8 - banks with this flag enabled can only update deposit/borrow caps
+    /// - CLOSE_ENABLED_FLAG - banks with this flag were created after 0.1.4 and can be closed.
+    ///   Banks without this flag can never be closed.
+    ///
     pub flags: u64,
+    /// Emissions APR. Number of emitted tokens (emissions_mint) per 1e(bank.mint_decimal) tokens
+    /// (bank mint) (native amount) per 1 YEAR.
     pub emissions_rate: u64,
     pub emissions_remaining: WrappedI80F48,
     pub emissions_mint: Pubkey,
 
+    /// Fees collected and pending withdraw for the `FeeState.global_fee_wallet`'s canonical ATA for `mint`
     pub collected_program_fees_outstanding: WrappedI80F48,
 
+    /// Controls this bank's emode configuration, which enables some banks to treat the assets of
+    /// certain other banks more preferentially as collateral.
     pub emode: EmodeSettings,
 
+    /// Set with `update_fees_destination_account`. This should be an ATA for the bank's mint. If
+    /// pubkey default, the bank doesn't support this feature, and the fees must be collected
+    /// manually (withdraw_fees).
     pub fees_destination_account: Pubkey,
 
-    pub _padding_0: [u8; 8],
-    pub _padding_1: [[u64; 2]; 30],
+    pub cache: BankCache,
+    /// Number of user lending positions currently open in this bank
+    /// * For banks created prior to 0.1.4, this is the number of positions opened/closed after
+    ///   0.1.4 goes live, and may be negative.
+    /// * For banks created in 0.1.4 or later, this is the number of positions open in total, and
+    ///   the bank may safely be closed if this is zero. Will never go negative.
+    pub lending_position_count: i32,
+    /// Number of user borrowing positions currently open in this bank
+    /// * For banks created prior to 0.1.4, this is the number of positions opened/closed after
+    ///   0.1.4 goes live, and may be negative.
+    /// * For banks created in 0.1.4 or later, this is the number of positions open in total, and
+    ///   the bank may safely be closed if this is zero. Will never go negative.
+    pub borrowing_position_count: i32,
+    pub _padding_0: [u8; 16],
+    pub _padding_1: [[u64; 2]; 19], // 8 * 2 * 19 = 304B
 }
 
 // Initialize a Bank instance
@@ -528,13 +574,16 @@ impl Bank {
         Ok(())
     }
 
+    /// Calculate the interest rate accrual state changes for a given time period
+    ///
+    /// Collected protocol and insurance fees are stored in state.
+    /// A separate instruction is required to withdraw these fees.
     pub fn accrue_interest(
         &mut self,
         current_timestamp: i64,
         group: &MarginfiGroup,
         #[cfg(not(feature = "client"))] bank: Pubkey,
     ) -> MarginfiResult<()> {
-        // Locating expensive logic
         #[cfg(all(not(feature = "client"), feature = "debug"))]
         anchor_lang::solana_program::log::sol_log_compute_units();
 
@@ -585,10 +634,18 @@ impl Bank {
         )
         .ok_or_else(math_error!())?;
 
-        debug!("deposit share value: {}\nlibality share value: {}\nfees collected: {}\ninsurance collected: {}",
+        debug!("deposit share value: {}\nliability share value: {}\nfees collected: {}\ninsurance collected: {}",
             asset_share_value, liability_share_value, group_fees_collected, insurance_fees_collected);
 
-        // Including compound interest
+        // Calc interest only
+        self.cache.accumulated_since_last_update = asset_share_value
+            .checked_sub(I80F48::from(self.asset_share_value))
+            .and_then(|v| v.checked_mul(I80F48::from(self.total_asset_shares)))
+            .ok_or_else(math_error!())?
+            .into();
+        // The time span for this interest calculation
+        self.cache.interest_accumulated_for = time_delta.min(u32::MAX as u64) as u32;
+
         self.asset_share_value = asset_share_value.into();
         self.liability_share_value = liability_share_value.into();
 
@@ -609,7 +666,6 @@ impl Bank {
                     .into()
             };
         }
-
         if protocol_fees_collected > I80F48::ZERO {
             self.collected_program_fees_outstanding = {
                 protocol_fees_collected
@@ -637,6 +693,35 @@ impl Bank {
             });
         }
 
+        Ok(())
+    }
+
+    /// Updates bank cache with the actual values for interest/fee rates.
+    ///
+    /// Should be called in the end of each instruction calling `accrue_interest` to ensure the cache is up to date.
+    pub fn update_bank_cache(&mut self, group: &MarginfiGroup) -> MarginfiResult<()> {
+        let total_assets_amount = self.get_asset_amount(self.total_asset_shares.into())?;
+        let total_liabilities_amount =
+            self.get_liability_amount(self.total_liability_shares.into())?;
+
+        if (total_assets_amount == I80F48::ZERO) || (total_liabilities_amount == I80F48::ZERO) {
+            self.cache = BankCache::default();
+            return Ok(());
+        }
+
+        let ir_calc = self
+            .config
+            .interest_rate_config
+            .create_interest_rate_calculator(group);
+
+        let utilization_rate = total_liabilities_amount
+            .checked_div(total_assets_amount)
+            .ok_or_else(math_error!())?;
+        let interest_rates = ir_calc
+            .calc_interest_rate(utilization_rate)
+            .ok_or_else(math_error!())?;
+
+        self.cache.update_interest_rates(&interest_rates);
         Ok(())
     }
 
@@ -1242,8 +1327,9 @@ pub struct InterestRateCalc {
 }
 
 impl InterestRateCalc {
-    /// Return interest rate charged to borrowers and to depositors.
+/// Return interest rate charged to borrowers and to depositors.
     /// Rate is denominated in APR (0-).
+    ///
     /// Return ComputedInterestRates
     pub fn calc_interest_rate(&self, utilization_ratio: I80F48) -> Option<ComputedInterestRates> {
         let Fees {
@@ -1258,20 +1344,21 @@ impl InterestRateCalc {
         let fee_ir = insurance_fee_rate + group_fee_rate + protocol_fee_rate;
         let fee_fixed = insurance_fee_fixed + group_fee_fixed + protocol_fee_fixed;
 
-        let base_rate = self.interest_rate_curve(utilization_ratio)?;
+        let base_rate_apr = self.interest_rate_curve(utilization_ratio)?;
 
         // Lending rate is adjusted for utilization ratio to symmetrize payments between borrowers and depositors.
-        let lending_rate_apr = base_rate.checked_mul(utilization_ratio)?;
+        let lending_rate_apr = base_rate_apr.checked_mul(utilization_ratio)?;
 
         // Borrowing rate is adjusted for fees.
         // borrowing_rate = base_rate + base_rate * rate_fee + total_fixed_fee_apr
-        let borrowing_rate_apr = base_rate
+        let borrowing_rate_apr = base_rate_apr
             .checked_mul(I80F48::ONE.checked_add(fee_ir)?)?
             .checked_add(fee_fixed)?;
 
-        let group_fee_apr = calc_fee_rate(base_rate, group_fee_rate, group_fee_fixed)?;
-        let insurance_fee_apr = calc_fee_rate(base_rate, insurance_fee_rate, insurance_fee_fixed)?;
-        let protocol_fee_apr = calc_fee_rate(base_rate, protocol_fee_rate, protocol_fee_fixed)?;
+        let group_fee_apr = calc_fee_rate(base_rate_apr, group_fee_rate, group_fee_fixed)?;
+        let insurance_fee_apr =
+            calc_fee_rate(base_rate_apr, insurance_fee_rate, insurance_fee_fixed)?;
+        let protocol_fee_apr = calc_fee_rate(base_rate_apr, protocol_fee_rate, protocol_fee_fixed)?;
 
         assert!(lending_rate_apr >= I80F48::ZERO);
         assert!(borrowing_rate_apr >= I80F48::ZERO);
@@ -1281,6 +1368,7 @@ impl InterestRateCalc {
 
         // TODO: Add liquidation discount check
         Some(ComputedInterestRates {
+            base_rate_apr,
             lending_rate_apr,
             borrowing_rate_apr,
             group_fee_apr,
@@ -1372,14 +1460,15 @@ fn calc_interest_rate_accrual_state_changes(
     asset_share_value: I80F48,
     liability_share_value: I80F48,
 ) -> Option<InterestRateStateChanges> {
+    // If the cache is empty, we need to calculate the interest rates
     let utilization_rate = total_liabilities_amount.checked_div(total_assets_amount)?;
-    let computed_rates = interest_rate_calc.calc_interest_rate(utilization_rate)?;
-
     debug!(
         "Utilization rate: {}, time delta {}s",
         utilization_rate, time_delta
     );
-    debug!("{:#?}", computed_rates);
+    let interest_rates = interest_rate_calc.calc_interest_rate(utilization_rate)?;
+
+    debug!("{:#?}", interest_rates);
 
     let ComputedInterestRates {
         lending_rate_apr,
@@ -1387,7 +1476,8 @@ fn calc_interest_rate_accrual_state_changes(
         group_fee_apr,
         insurance_fee_apr,
         protocol_fee_apr,
-    } = computed_rates;
+        ..
+    } = interest_rates;
 
     Some(InterestRateStateChanges {
         new_asset_share_value: calc_accrued_interest_payment_per_period(
@@ -1468,13 +1558,4 @@ pub struct Fees {
     pub group_fee_fixed: I80F48,
     pub protocol_fee_rate: I80F48,
     pub protocol_fee_fixed: I80F48,
-}
-
-#[derive(Debug, Clone)]
-pub struct ComputedInterestRates {
-    pub lending_rate_apr: I80F48,
-    pub borrowing_rate_apr: I80F48,
-    pub group_fee_apr: I80F48,
-    pub insurance_fee_apr: I80F48,
-    pub protocol_fee_apr: I80F48,
 }
