@@ -1897,4 +1897,68 @@ mod tests {
             I80F48!(0.001)
         );
     }
+
+    #[test]
+    /// ur: 0.6
+    /// protocol_fixed_fee: 0.01
+    fn ir_config_calc_interest_rate_pff_o1() {
+        let config = InterestRateConfig {
+            optimal_utilization_rate: I80F48!(0.6).into(),
+            plateau_interest_rate: I80F48!(0.40).into(),
+            protocol_fixed_fee_apr: I80F48!(0.01).into(),
+            ..Default::default()
+        };
+
+        let ComputedInterestRates {
+            base_rate_apr,
+            lending_rate_apr: lending_apr,
+            borrowing_rate_apr: borrow_apr,
+            group_fee_apr: group_fees_apr,
+            insurance_fee_apr: insurance_apr,
+            protocol_fee_apr,
+        } = config
+            .create_interest_rate_calculator(&MarginfiGroup::default())
+            .calc_interest_rate(I80F48!(0.6))
+            .unwrap();
+
+        assert_eq_with_tolerance!(base_rate_apr, I80F48!(0.4), I80F48!(0.001));
+        assert_eq_with_tolerance!(lending_apr, I80F48!(0.24), I80F48!(0.001));
+        assert_eq_with_tolerance!(borrow_apr, I80F48!(0.41), I80F48!(0.001));
+        assert_eq_with_tolerance!(group_fees_apr, I80F48!(0.01), I80F48!(0.001));
+        assert_eq_with_tolerance!(insurance_apr, I80F48!(0), I80F48!(0.001));
+        assert_eq_with_tolerance!(protocol_fee_apr, I80F48!(0), I80F48!(0.001));
+    }
+
+    #[test]
+    /// ur: 0.5
+    /// protocol_fixed_fee: 0.01
+    /// optimal_utilization_rate: 0.5
+    /// plateau_interest_rate: 0.4
+    fn ir_config_calc_interest_rate_pff_01_ur_05() {
+        let config = InterestRateConfig {
+            optimal_utilization_rate: I80F48!(0.5).into(),
+            plateau_interest_rate: I80F48!(0.4).into(),
+            protocol_fixed_fee_apr: I80F48!(0.01).into(),
+            insurance_ir_fee: I80F48!(0.1).into(),
+            ..Default::default()
+        };
+
+        let ComputedInterestRates {
+            base_rate_apr,
+            lending_rate_apr: lending_apr,
+            borrowing_rate_apr: borrow_apr,
+            group_fee_apr: group_fees_apr,
+            insurance_fee_apr: insurance_apr,
+            protocol_fee_apr,
+        } = config
+            .create_interest_rate_calculator(&MarginfiGroup::default())
+            .calc_interest_rate(I80F48!(0.5))
+            .unwrap();
+
+            assert_eq_with_tolerance!(base_rate_apr, I80F48!(0.4), I80F48!(0.001));
+            assert_eq_with_tolerance!(lending_apr, I80F48!(0.2), I80F48!(0.001));
+            assert_eq_with_tolerance!(borrow_apr, I80F48!(0.45), I80F48!(0.001));
+            assert_eq_with_tolerance!(group_fees_apr, I80F48!(0.01), I80F48!(0.001));
+            assert_eq_with_tolerance!(insurance_apr, I80F48!(0.04), I80F48!(0.001));
+    }
 }
