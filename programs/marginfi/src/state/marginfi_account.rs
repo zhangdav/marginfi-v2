@@ -1,6 +1,5 @@
 use super::price::OraclePriceFeedAdapter;
 use crate::constants::EXP_10_I80F48;
-use crate::debug;
 use crate::math_error;
 use crate::prelude::MarginfiResult;
 use crate::state::marginfi_group::{Bank, WrappedI80F48};
@@ -10,12 +9,47 @@ use anchor_lang::prelude::*;
 use bytemuck::{Pod, Zeroable};
 use fixed::types::I80F48;
 use type_layout::TypeLayout;
+use crate::state::health_cache::HealthCache;
 
 pub struct BankAccountWithPriceFeed<'a, 'info> {
     bank: AccountLoader<'info, Bank>,
     price_feed: Box<MarginfiResult<OraclePriceFeedAdapter>>,
     balance: &'a Balance,
 }
+
+assert_struct_size!(MarginfiAccount, 2304);
+assert_struct_align!(MarginfiAccount, 8);
+#[account(zero_copy)]
+#[repr(C)]
+#[derive(PartialEq, Eq, TypeLayout)]
+pub struct MarginfiAccount {
+    pub group: Pubkey,
+    pub authority: Pubkey,
+    pub lending_account: LendingAccount,
+    pub account_flags: u64,
+    pub emissions_destination_account: Pubkey,
+    pub health_cache: HealthCache,
+    pub migrated_from: Pubkey,
+    pub migrated_to: Pubkey,
+    pub _padding: [u64; 13],
+}
+
+/// TODO: MarginfiAccount impl
+
+pub const MAX_LENDING_ACCOUNT_BALANCES: usize = 16;
+
+assert_struct_size!(LendingAccount, 1728);
+assert_struct_align!(LendingAccount, 8);
+#[repr(C)]
+#[derive(
+    AnchorDeserialize, AnchorSerialize, Copy, Clone, Zeroable, Pod, PartialEq, Eq, TypeLayout,
+)]
+pub struct LendingAccount {
+    pub balances: [Balance; MAX_LENDING_ACCOUNT_BALANCES],
+    pub _padding: [u64; 8],
+}
+
+/// TODO: LendingAccount impl
 
 assert_struct_size!(Balance, 104);
 assert_struct_align!(Balance, 8);

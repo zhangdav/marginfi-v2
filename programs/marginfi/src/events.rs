@@ -15,3 +15,8 @@ pub struct LendingPoolBankAccrueInterestEvent {
     pub fees_collected: f64,
     pub insurance_collected: f64,
 }
+
+#[event]
+pub struct MarginfiGroupCreateEvent {
+    pub header: GroupEventHeader,
+}

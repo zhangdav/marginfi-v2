@@ -14,6 +14,8 @@ pub const LIQUIDITY_VAULT_SEED: &str = "liquidity_vault";
 pub const INSURANCE_VAULT_SEED: &str = "insurance_vault";
 pub const FEE_VAULT_SEED: &str = "fee_vault";
 
+pub const FEE_STATE_SEED: &str = "feestate";
+
 /// For testing, this is a typical program fee.
 pub const PROTOCOL_FEE_RATE_DEFAULT: I80F48 = I80F48!(0.025);
 /// For testing, this is a typical program fee.
