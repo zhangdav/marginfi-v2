@@ -1088,6 +1088,7 @@ version = "0.1.0"
 dependencies = [
  "anchor-lang",
  "anchor-spl",
+ "anyhow",
  "bytemuck",
  "cfg-if",
  "enum_dispatch",

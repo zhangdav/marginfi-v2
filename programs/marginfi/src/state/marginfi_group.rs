@@ -1949,16 +1949,203 @@ mod tests {
             borrowing_rate_apr: borrow_apr,
             group_fee_apr: group_fees_apr,
             insurance_fee_apr: insurance_apr,
-            protocol_fee_apr,
+            protocol_fee_apr: _,
         } = config
             .create_interest_rate_calculator(&MarginfiGroup::default())
             .calc_interest_rate(I80F48!(0.5))
             .unwrap();
 
-            assert_eq_with_tolerance!(base_rate_apr, I80F48!(0.4), I80F48!(0.001));
-            assert_eq_with_tolerance!(lending_apr, I80F48!(0.2), I80F48!(0.001));
-            assert_eq_with_tolerance!(borrow_apr, I80F48!(0.45), I80F48!(0.001));
-            assert_eq_with_tolerance!(group_fees_apr, I80F48!(0.01), I80F48!(0.001));
-            assert_eq_with_tolerance!(insurance_apr, I80F48!(0.04), I80F48!(0.001));
+        assert_eq_with_tolerance!(base_rate_apr, I80F48!(0.4), I80F48!(0.001));
+        assert_eq_with_tolerance!(lending_apr, I80F48!(0.2), I80F48!(0.001));
+        assert_eq_with_tolerance!(borrow_apr, I80F48!(0.45), I80F48!(0.001));
+        assert_eq_with_tolerance!(group_fees_apr, I80F48!(0.01), I80F48!(0.001));
+        assert_eq_with_tolerance!(insurance_apr, I80F48!(0.04), I80F48!(0.001));
+    }
+
+    #[test]
+    fn calc_fee_rate_1() {
+        let rate = I80F48!(0.4);
+        let fee_ir = I80F48!(0.05);
+        let fee_fixed = I80F48!(0.01);
+
+        assert_eq!(
+            calc_fee_rate(rate, fee_ir, fee_fixed).unwrap(),
+            I80F48!(0.03)
+        );
+    }
+
+    /// ur: 0.8
+    /// protocol_fixed_fee: 0.01
+    /// optimal_utilization_rate: 0.5
+    /// plateau_interest_rate: 0.4
+    /// max_interest_rate: 3
+    /// insurance_ir_fee: 0.1
+    #[test]
+    fn ir_config_calc_interest_rate_pff_01_ur_08() {
+        let config = InterestRateConfig {
+            optimal_utilization_rate: I80F48!(0.4).into(),
+            plateau_interest_rate: I80F48!(0.4).into(),
+            protocol_fixed_fee_apr: I80F48!(0.01).into(),
+            max_interest_rate: I80F48!(3).into(),
+            insurance_ir_fee: I80F48!(0.1).into(),
+            ..Default::default()
+        };
+
+        let ComputedInterestRates {
+            base_rate_apr,
+            lending_rate_apr: lending_apr,
+            borrowing_rate_apr: borrow_apr,
+            group_fee_apr: group_fees_apr,
+            insurance_fee_apr: insurance_apr,
+            protocol_fee_apr: _,
+        } = config
+            .create_interest_rate_calculator(&MarginfiGroup::default())
+            .calc_interest_rate(I80F48!(0.7))
+            .unwrap();
+
+        assert_eq_with_tolerance!(base_rate_apr, I80F48!(1.7), I80F48!(0.001));
+        assert_eq_with_tolerance!(lending_apr, I80F48!(1.19), I80F48!(0.001));
+        assert_eq_with_tolerance!(borrow_apr, I80F48!(1.88), I80F48!(0.001));
+        assert_eq_with_tolerance!(group_fees_apr, I80F48!(0.01), I80F48!(0.001));
+        assert_eq_with_tolerance!(insurance_apr, I80F48!(0.17), I80F48!(0.001));
+    }
+
+    #[test]
+    fn ir_accrual_failing_fuzz_test_example() -> anyhow::Result<()> {
+        let ir_config = InterestRateConfig {
+            optimal_utilization_rate: I80F48!(0.4).into(),
+            plateau_interest_rate: I80F48!(0.4).into(),
+            protocol_fixed_fee_apr: I80F48!(0.01).into(),
+            max_interest_rate: I80F48!(3).into(),
+            insurance_ir_fee: I80F48!(0.1).into(),
+            ..Default::default()
+        };
+
+        let current_timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let mut bank = Bank {
+            asset_share_value: I80F48::ONE.into(),
+            liability_share_value: I80F48::ONE.into(),
+            total_liability_shares: I80F48!(207_112_621_602).into(),
+            total_asset_shares: I80F48!(10_000_000_000_000).into(),
+            last_update: current_timestamp,
+            config: BankConfig {
+                asset_weight_init: I80F48!(0.5).into(),
+                asset_weight_maint: I80F48!(0.75).into(),
+                liability_weight_init: I80F48!(1.5).into(),
+                liability_weight_maint: I80F48!(1.25).into(),
+                borrow_limit: u64::MAX,
+                deposit_limit: u64::MAX,
+                interest_rate_config: ir_config,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let pre_net_assets = bank.get_asset_amount(bank.total_asset_shares.into())?
+            - bank.get_liability_amount(bank.total_liability_shares.into())?;
+
+        let mut clock = Clock::default();
+
+        // Mock time 1 hour later
+        clock.unix_timestamp = current_timestamp + 3600;
+
+        bank.accrue_interest(
+            current_timestamp,
+            &MarginfiGroup::default(),
+            #[cfg(not(feature = "client"))]
+            Pubkey::default(),
+        )
+        .unwrap();
+
+        let post_collected_fees = I80F48::from(bank.collected_group_fees_outstanding)
+            + I80F48::from(bank.collected_insurance_fees_outstanding);
+
+        let post_net_assets = bank.get_asset_amount(bank.total_asset_shares.into())?
+            + post_collected_fees
+            - bank.get_liability_amount(bank.total_liability_shares.into())?;
+
+        assert_eq_with_tolerance!(pre_net_assets, post_net_assets, I80F48!(1));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_accruing_interest() -> anyhow::Result<()> {
+        let ir_config = InterestRateConfig {
+            optimal_utilization_rate: I80F48!(0.4).into(),
+            plateau_interest_rate: I80F48!(0.4).into(),
+            protocol_fixed_fee_apr: I80F48!(0.01).into(),
+            max_interest_rate: I80F48!(3).into(),
+            insurance_ir_fee: I80F48!(0.1).into(),
+            ..Default::default()
+        };
+
+        let mut group = MarginfiGroup::default();
+        group.group_flags = 1;
+        group.fee_state_cache.program_fee_fixed = PROTOCOL_FEE_FIXED_DEFAULT.into();
+        group.fee_state_cache.program_fee_rate = PROTOCOL_FEE_RATE_DEFAULT.into();
+
+        let liab_share_value = I80F48!(1.0);
+        let asset_share_value = I80F48!(1.0);
+
+        let total_liability_shares = I80F48!(207_112_621_602);
+        let total_asset_shares = I80F48!(10_000_000_000_000);
+
+        let old_total_liability_amount = liab_share_value * total_liability_shares;
+        let old_total_asset_amount = asset_share_value * total_asset_shares;
+
+        let InterestRateStateChanges {
+            new_asset_share_value,
+            new_liability_share_value: new_liab_share_value,
+            insurance_fees_collected: insurance_collected,
+            group_fees_collected,
+            protocol_fees_collected,
+        } = calc_interest_rate_accrual_state_changes(
+            3600,
+            total_asset_shares,
+            total_liability_shares,
+            &ir_config.create_interest_rate_calculator(&group),
+            asset_share_value,
+            liab_share_value,
+        )
+        .unwrap();
+
+        let new_total_liability_amount = total_liability_shares * new_liab_share_value;
+        let new_total_asset_amount = total_asset_shares * new_asset_share_value;
+
+        println!("new_asset_share_value: {}", new_asset_share_value);
+        println!("new_liab_share_value: {}", new_liab_share_value);
+        println!("group_fees_collected: {}", group_fees_collected);
+        println!("insurance_collected: {}", insurance_collected);
+        println!("protocol_fees_collected: {}", protocol_fees_collected);
+
+        println!("new_total_liability_amount: {}", new_total_liability_amount);
+        println!("new_total_asset_amount: {}", new_total_asset_amount);
+
+        println!("old_total_liability_amount: {}", old_total_liability_amount);
+        println!("old_total_asset_amount: {}", old_total_asset_amount);
+
+        let total_fees_collected =
+            group_fees_collected + insurance_collected + protocol_fees_collected;
+
+        println!("total_fee_collected: {}", total_fees_collected);
+
+        println!(
+            "diff: {}",
+            ((new_total_asset_amount - new_total_liability_amount) + total_fees_collected)
+                - (old_total_asset_amount - old_total_liability_amount)
+        );
+
+        assert_eq_with_tolerance!(
+            (new_total_asset_amount - new_total_liability_amount) + total_fees_collected,
+            old_total_asset_amount - old_total_liability_amount,
+            I80F48::ONE
+        );
+
+        Ok(())
     }
 }
