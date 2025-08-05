@@ -20,3 +20,10 @@ pub struct LendingPoolBankAccrueInterestEvent {
 pub struct MarginfiGroupCreateEvent {
     pub header: GroupEventHeader,
 }
+
+#[event]
+pub struct MarginfiGroupConfigureEvent {
+    pub header: GroupEventHeader,
+    pub admin: Pubkey,
+    pub flags: u64,
+}

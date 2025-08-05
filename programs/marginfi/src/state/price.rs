@@ -7,7 +7,6 @@ use crate::{check, live};
 use anchor_lang::prelude::*;
 use bytemuck::{Pod, Zeroable};
 use enum_dispatch::enum_dispatch;
-use pyth_sdk_solana::Price;
 use pyth_solana_receiver_sdk::price_update::{FeedId, PriceUpdateV2};
 use std::cell::Ref;
 use switchboard_on_demand::{
@@ -41,22 +40,31 @@ impl OracleSetup {
     }
 }
 
+// TODO: PriceBias
+
 #[enum_dispatch(PriceAdapter)]
 #[cfg_attr(feature = "client", derive(Clone))]
 pub enum OraclePriceFeedAdapter {
-    PythLegacy(PythLegacyPriceFeed),
-    SwitchboardV2(SwitchboardV2PriceFeed),
     PythPushOracle(PythPushOraclePriceFeed),
     SwitchboardPull(SwitchboardPullPriceFeed),
 }
 
-#[cfg_attr(feature = "client", derive(Clone, Debug))]
-pub struct SwitchboardV2PriceFeed {
-    _ema_price: Box<Price>,
-    _price: Box<Price>,
-}
-
 impl OraclePriceFeedAdapter {
+    // pub fn try_from_bank_config<'info>(
+    //     bank_config: &BankConfig,
+    //     ais: &'info [AccountInfo<'info>],
+    //     clock: &Clock,
+    // ) -> MarginfiResult<Self> {
+    //     Self::try_from_bank_config_with_max_age(
+    //         bank_config,
+    //         ais,
+    //         clock,
+    //         bank_config.get_oracle_max_age(),
+    //     )
+    // }
+
+    // TODO: try_from_bank_config_with_max_age
+
     /// * lst_mint, stake_pool, sol_pool - required only if configuring
     ///   `OracleSetup::StakedWithPythPush` initially. (subsequent validations of staked banks can
     ///   omit these)
@@ -212,30 +220,6 @@ impl OraclePriceFeedAdapter {
     }
 }
 
-// TODO:
-// impl SwitchboardV2PriceFeed {}
-
-#[cfg_attr(feature = "client", derive(Clone, Debug))]
-pub struct PythLegacyPriceFeed {
-    ema_price: Box<Price>,
-    price: Box<Price>,
-}
-
-// TODO:
-// impl PythLegacyPriceFeed {
-//     pub fn load_checked(ai: &AccountInfo, current_time: i64, max_age: u64) -> MarginfiResult<Self> {
-//         let price_feed = load_pyth_price_feed(ai)?;
-
-//         let ema_price = if live!() {
-//             price_feed
-//                 .get_ema_price_no_older_than(current_time, max_age)
-//                 .ok_or(MarginfiError::InternalLogicError)?
-//         } else {
-//             price_feed.get_ema_price_unchecked()
-//         }
-//     }
-// }
-
 #[cfg_attr(feature = "client", derive(Clone, Debug))]
 pub struct PythPushOraclePriceFeed {
     ema_price: Box<pyth_solana_receiver_sdk::price_update::Price>,
@@ -243,6 +227,14 @@ pub struct PythPushOraclePriceFeed {
 }
 
 impl PythPushOraclePriceFeed {
+    // TODO: load_checked
+    // TODO: load_unchecked
+    // TODO: peek_feed_id
+    // TODO: get_confidence_interval
+    // TODO: get_ema_price
+    // TODO: get_unweighted_price
+    // TODO: find_oracle_address
+
     pub fn check_ai_and_feed_id(ai: &AccountInfo, feed_id: &FeedId) -> MarginfiResult {
         let price_feed_account = load_price_update_v2_checked(ai)?;
 
@@ -256,12 +248,16 @@ impl PythPushOraclePriceFeed {
     }
 }
 
+// TODO: impl PriceAdapter for PythPushOraclePriceFeed
+
 #[cfg_attr(feature = "client", derive(Clone, Debug))]
 pub struct SwitchboardPullPriceFeed {
     pub feed: Box<LitePullFeedAccountData>,
 }
 
 impl SwitchboardPullPriceFeed {
+    // TODO: load_checked
+
     fn check_ais(ai: &AccountInfo) -> MarginfiResult {
         let ai_data = ai.data.borrow();
 
@@ -274,7 +270,12 @@ impl SwitchboardPullPriceFeed {
 
         Ok(())
     }
+
+    // TODO: get_price
+    // TODO: get_confidence_interval
 }
+
+// TODO: impl PriceAdapter for SwitchboardPullPriceFeed
 
 #[cfg_attr(feature = "client", derive(Clone, Debug))]
 pub struct LitePullFeedAccountData {
@@ -284,6 +285,9 @@ pub struct LitePullFeedAccountData {
     #[cfg(feature = "client")]
     pub last_update_timestamp: i64,
 }
+
+// TODO: impl From<&PullFeedAccountData> for LitePullFeedAccountData
+// TODO: impl From<Ref<'_, PullFeedAccountData>> for LitePullFeedAccountData
 
 #[derive(Copy, Clone, Debug)]
 pub enum OraclePriceType {
@@ -360,3 +364,5 @@ pub fn load_price_update_v2_checked(ai: &AccountInfo) -> MarginfiResult<PriceUpd
         &mut &price_feed_data.as_ref()[8..],
     )?)
 }
+
+// TODO: pyth_price_components_to_i80f48

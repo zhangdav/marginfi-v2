@@ -1,16 +1,17 @@
-use anchor_lang::prelude::*;
 use crate::{
-    prelude::*,
-    events::{GroupEventHeader, MarginfiGroupCreateEvent},
-    state::marginfi_group::MarginfiGroup,
     constants::FEE_STATE_SEED,
+    events::{GroupEventHeader, MarginfiGroupCreateEvent},
+    prelude::*,
     state::fee_state::FeeState,
+    state::marginfi_group::MarginfiGroup,
 };
+use anchor_lang::prelude::*;
 
 pub fn initialize_group(
     ctx: Context<MarginfiGroupInitialize>,
     is_arena_group: bool,
 ) -> MarginfiResult {
+    // Used to initialize a zero-copy account. Must be called only once (the account is empty).
     let marginfi_group = &mut ctx.accounts.marginfi_group.load_init()?;
 
     marginfi_group.set_initial_configuration(ctx.accounts.admin.key());
@@ -32,6 +33,7 @@ pub fn initialize_group(
     marginfi_group.fee_state_cache.global_fee_wallet = fee_state.global_fee_wallet;
     marginfi_group.fee_state_cache.program_fee_fixed = fee_state.program_fee_fixed;
     marginfi_group.fee_state_cache.program_fee_rate = fee_state.program_fee_rate;
+    marginfi_group.banks = 0;
 
     let cache = marginfi_group.fee_state_cache;
     msg!(
@@ -56,8 +58,10 @@ pub struct MarginfiGroupInitialize<'info> {
     #[account(
         init,
         payer = admin,
+        // Predictable memory size
         space = 8 + std::mem::size_of::<MarginfiGroup>(),
     )]
+    // AccountLoader is suitable for zero copy
     pub marginfi_group: AccountLoader<'info, MarginfiGroup>,
 
     #[account(mut)]

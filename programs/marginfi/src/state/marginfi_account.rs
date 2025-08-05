@@ -2,6 +2,7 @@ use super::price::OraclePriceFeedAdapter;
 use crate::constants::EXP_10_I80F48;
 use crate::math_error;
 use crate::prelude::MarginfiResult;
+use crate::state::health_cache::HealthCache;
 use crate::state::marginfi_group::{Bank, WrappedI80F48};
 use crate::state::price::OraclePriceType;
 use crate::{assert_struct_align, assert_struct_size};
@@ -9,7 +10,6 @@ use anchor_lang::prelude::*;
 use bytemuck::{Pod, Zeroable};
 use fixed::types::I80F48;
 use type_layout::TypeLayout;
-use crate::state::health_cache::HealthCache;
 
 pub struct BankAccountWithPriceFeed<'a, 'info> {
     bank: AccountLoader<'info, Bank>,
@@ -90,7 +90,7 @@ pub fn calc_value(
     };
 
     #[cfg(target_os = "solana")]
-    debug!(
+    crate::debug!(
         "weighted_asset_qt: {}, price: {}, expo: {}",
         weight_asset_amount, price, mint_decimals
     );
