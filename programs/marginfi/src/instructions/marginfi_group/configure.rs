@@ -1,7 +1,6 @@
-use anchor_lang::prelude::*;
-use crate::{state::marginfi_group::MarginfiGroup, MarginfiResult};
 use crate::events::{GroupEventHeader, MarginfiGroupConfigureEvent};
-
+use crate::{state::marginfi_group::MarginfiGroup, MarginfiResult};
+use anchor_lang::prelude::*;
 
 /// Configure margin group.
 ///

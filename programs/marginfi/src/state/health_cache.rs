@@ -1,6 +1,6 @@
 use crate::{
-    assert_struct_align, assert_struct_size,
-    state::marginfi_account::MAX_LENDING_ACCOUNT_BALANCES, state::marginfi_group::WrappedI80F48,
+    assert_struct_align, assert_struct_size, state::marginfi_account::MAX_LENDING_ACCOUNT_BALANCES,
+    state::marginfi_group::WrappedI80F48,
 };
 use anchor_lang::prelude::*;
 use bytemuck::{Pod, Zeroable};

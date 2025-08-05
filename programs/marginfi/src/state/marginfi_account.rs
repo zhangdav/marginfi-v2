@@ -92,7 +92,9 @@ pub fn calc_value(
     #[cfg(target_os = "solana")]
     crate::debug!(
         "weighted_asset_qt: {}, price: {}, expo: {}",
-        weight_asset_amount, price, mint_decimals
+        weight_asset_amount,
+        price,
+        mint_decimals
     );
     let value = weighted_asset_amount
         .checked_mul(price)
