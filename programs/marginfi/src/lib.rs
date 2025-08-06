@@ -2,8 +2,8 @@ use anchor_lang::prelude::*;
 use instructions::*;
 use prelude::*;
 
-use state::marginfi_group::BankConfigOpt;
 use state::marginfi_group::WrappedI80F48;
+use state::marginfi_group::{BankConfigOpt, InterestRateConfigOpt};
 
 pub mod constants;
 pub mod errors;
@@ -120,6 +120,29 @@ pub mod marginfi {
             emissions_flags,
             emissions_rate,
             additional_emissions,
+        )
+    }
+
+    /// (delegate_curve_admin only)
+    pub fn lending_pool_configure_bank_interest_only(
+        ctx: Context<LendingPoolConfigureBankInterestOnly>,
+        interest_rate_config: InterestRateConfigOpt,
+    ) -> MarginfiResult {
+        marginfi_group::lending_pool_configure_bank_interest_only(ctx, interest_rate_config)
+    }
+
+    /// (delegate_limits_admin only)
+    pub fn lending_pool_configure_bank_limits_only(
+        ctx: Context<LendingPoolConfigureBankLimitsOnly>,
+        deposit_limit: Option<u64>,
+        borrow_limit: Option<u64>,
+        total_asset_value_init_limit: Option<u64>,
+    ) -> MarginfiResult {
+        marginfi_group::lending_pool_configure_bank_limits_only(
+            ctx,
+            deposit_limit,
+            borrow_limit,
+            total_asset_value_init_limit,
         )
     }
 }
