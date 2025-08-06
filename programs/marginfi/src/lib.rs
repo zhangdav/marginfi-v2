@@ -145,4 +145,11 @@ pub mod marginfi {
             total_asset_value_init_limit,
         )
     }
+
+    // Operational instructions
+    pub fn lending_pool_accrue_bank_interest(
+        ctx: Context<LendingPoolAccrueBankInterest>,
+    ) -> MarginfiResult {
+        marginfi_group::lending_pool_accrue_bank_interest(ctx)
+    }
 }
