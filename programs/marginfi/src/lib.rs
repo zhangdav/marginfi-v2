@@ -2,6 +2,7 @@ use anchor_lang::prelude::*;
 use instructions::*;
 use prelude::*;
 
+use state::marginfi_group::BankConfigOpt;
 use state::marginfi_group::WrappedI80F48;
 
 pub mod constants;
@@ -86,6 +87,39 @@ pub mod marginfi {
             bank_init_flat_sol_fee,
             program_fee_fixed,
             program_fee_rate,
+        )
+    }
+
+    /// (admin only)
+    pub fn lending_pool_configure_bank(
+        ctx: Context<LendingPoolConfigureBank>,
+        bank_config_opt: BankConfigOpt,
+    ) -> MarginfiResult {
+        marginfi_group::lending_pool_configure_bank(ctx, bank_config_opt)
+    }
+
+    /// (delegate_emissions_admin only)
+    pub fn lending_pool_setup_emissions(
+        ctx: Context<LendingPoolSetupEmissions>,
+        flags: u64,
+        rate: u64,
+        total_emissions: u64,
+    ) -> MarginfiResult {
+        marginfi_group::lending_pool_setup_emissions(ctx, flags, rate, total_emissions)
+    }
+
+    /// (delegate_emissions_admin only)
+    pub fn lending_pool_update_emissions_parameters(
+        ctx: Context<LendingPoolUpdateEmissionsParameters>,
+        emissions_flags: Option<u64>,
+        emissions_rate: Option<u64>,
+        additional_emissions: Option<u64>,
+    ) -> MarginfiResult {
+        marginfi_group::lending_pool_update_emissions_parameters(
+            ctx,
+            emissions_flags,
+            emissions_rate,
+            additional_emissions,
         )
     }
 }
