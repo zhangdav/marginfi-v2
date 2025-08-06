@@ -2,6 +2,7 @@ use anchor_lang::prelude::*;
 use instructions::*;
 use prelude::*;
 
+use state::emode::{EmodeEntry, MAX_EMODE_ENTRIES};
 use state::marginfi_group::WrappedI80F48;
 use state::marginfi_group::{BankConfigOpt, InterestRateConfigOpt};
 
@@ -151,5 +152,14 @@ pub mod marginfi {
         ctx: Context<LendingPoolAccrueBankInterest>,
     ) -> MarginfiResult {
         marginfi_group::lending_pool_accrue_bank_interest(ctx)
+    }
+
+    /// (emode_admin only)
+    pub fn lending_pool_configure_bank_emode(
+        ctx: Context<LendingPoolConfigureBankEmode>,
+        emode_tag: u16,
+        entries: [EmodeEntry; MAX_EMODE_ENTRIES],
+    ) -> MarginfiResult {
+        marginfi_group::lending_pool_configure_bank_emode(ctx, emode_tag, entries)
     }
 }

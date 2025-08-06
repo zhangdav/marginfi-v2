@@ -96,6 +96,15 @@ impl EmodeSettings {
             self.flags &= !EMODE_ON;
         }
     }
+
+    /// Sets EMODE on flag if configuration has any entries, removes the flag if it has no entries.
+    pub fn update_emode_enabled(&mut self) {
+        if self.emode_config.has_entries() {
+            self.flags |= EMODE_ON;
+        } else {
+            self.flags &= !EMODE_ON;
+        }
+    }
 }
 
 assert_struct_size!(EmodeConfig, 400);

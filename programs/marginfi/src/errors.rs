@@ -24,6 +24,8 @@ pub enum MarginfiError {
     OracleNotSetup,
     #[msg("Update emissions error")] //6034
     EmissionsUpdateError,
+    #[msg("Unauthorized")] // 6042
+    Unauthorized,
     #[msg("Stake pool validation failed: check the stake pool, mint, or sol pool")] // 6048
     StakePoolValidationFailed,
     #[msg("Oracle error: wrong number of accounts")] // 6051
