@@ -6,6 +6,9 @@ pub const MAX_ORACLE_KEYS: usize = 5;
 pub const ASSET_TAG_DEFAULT: u8 = 0;
 pub const TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE: u64 = 0;
 
+pub const EMISSIONS_AUTH_SEED: &str = "emissions_auth_seed";
+pub const EMISSIONS_TOKEN_ACCOUNT_SEED: &str = "emissions_token_account_seed";
+
 pub const LIQUIDITY_VAULT_AUTHORITY_SEED: &str = "liquidity_vault_auth";
 pub const INSURANCE_VAULT_AUTHORITY_SEED: &str = "insurance_vault_auth";
 pub const FEE_VAULT_AUTHORITY_SEED: &str = "fee_vault_auth";

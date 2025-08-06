@@ -18,8 +18,12 @@ pub enum MarginfiError {
     IllegalUtilizationRatio,
     #[msg("Bank borrow cap exceeded")] // 6027
     BankLiabilityCapacityExceeded,
+    #[msg("Emissions already setup")] // 6030
+    EmissionsAlreadySetup,
     #[msg("Oracle is not set")] // 6031
     OracleNotSetup,
+    #[msg("Update emissions error")] //6034
+    EmissionsUpdateError,
     #[msg("Stake pool validation failed: check the stake pool, mint, or sol pool")] // 6048
     StakePoolValidationFailed,
     #[msg("Oracle error: wrong number of accounts")] // 6051

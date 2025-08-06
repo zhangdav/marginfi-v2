@@ -1,3 +1,4 @@
+use crate::state::marginfi_group::BankConfigOpt;
 use anchor_lang::prelude::*;
 
 #[derive(AnchorDeserialize, AnchorSerialize)]
@@ -26,4 +27,21 @@ pub struct MarginfiGroupConfigureEvent {
     pub header: GroupEventHeader,
     pub admin: Pubkey,
     pub flags: u64,
+}
+
+#[event]
+pub struct LendingPoolBankConfigureFrozenEvent {
+    pub header: GroupEventHeader,
+    pub bank: Pubkey,
+    pub mint: Pubkey,
+    pub deposit_limit: u64,
+    pub borrow_limit: u64,
+}
+
+#[event]
+pub struct LendingPoolBankConfigureEvent {
+    pub header: GroupEventHeader,
+    pub bank: Pubkey,
+    pub mint: Pubkey,
+    pub config: BankConfigOpt,
 }
