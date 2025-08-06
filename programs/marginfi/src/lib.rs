@@ -162,4 +162,13 @@ pub mod marginfi {
     ) -> MarginfiResult {
         marginfi_group::lending_pool_configure_bank_emode(ctx, emode_tag, entries)
     }
+
+    /// (admin only)
+    pub fn lending_pool_configure_bank_oracle(
+        ctx: Context<LendingPoolConfigureBankOracle>,
+        setup: u8,
+        oracle: Pubkey,
+    ) -> MarginfiResult {
+        marginfi_group::lending_pool_configure_bank_oracle(ctx, setup, oracle)
+    }
 }

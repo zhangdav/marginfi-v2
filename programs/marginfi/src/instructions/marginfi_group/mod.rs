@@ -1,5 +1,6 @@
 mod accrue_bank_interest;
 mod config_bank_emode;
+mod config_bank_oracle;
 mod config_group_fee;
 mod configure;
 mod configure_bank;
@@ -10,6 +11,7 @@ mod initialize;
 
 pub use accrue_bank_interest::*;
 pub use config_bank_emode::*;
+pub use config_bank_oracle::*;
 pub use config_group_fee::*;
 pub use configure::*;
 pub use configure_bank::*;

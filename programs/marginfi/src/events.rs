@@ -45,3 +45,11 @@ pub struct LendingPoolBankConfigureEvent {
     pub mint: Pubkey,
     pub config: BankConfigOpt,
 }
+
+#[event]
+pub struct LendingPoolBankConfigureOracleEvent {
+    pub header: GroupEventHeader,
+    pub bank: Pubkey,
+    pub oracle_setup: u8,
+    pub oracle: Pubkey,
+}
