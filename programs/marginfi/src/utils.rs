@@ -71,3 +71,21 @@ fn ceil_div(numerator: u128, denominator: u128) -> Option<u128> {
         .checked_sub(1)?
         .checked_div(denominator)
 }
+
+pub trait NumTraitsWithTolerance<T> {
+    fn is_zero_with_tolerance(&self, t: T) -> bool;
+    fn is_positive_with_tolerance(&self, t: T) -> bool;
+}
+
+impl<T> NumTraitsWithTolerance<T> for I80F48
+where
+    I80F48: PartialOrd<T>,
+{
+    fn is_zero_with_tolerance(&self, t: T) -> bool {
+        self.abs() < t
+    }
+
+    fn is_positive_with_tolerance(&self, t: T) -> bool {
+        self.gt(&t)
+    }
+}

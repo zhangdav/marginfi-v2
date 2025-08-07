@@ -33,6 +33,9 @@ pub const PYTH_PUSH_MIGRATED: u8 = 1 << 0;
 pub const FREEZE_SETTINGS: u64 = 1 << 3;
 pub const CLOSE_ENABLED_FLAG: u64 = 1 << 4;
 
+/// Comparios threshold used to account for arithmetic artifacts on balances
+pub const ZERO_AMOUNT_THRESHOLD: I80F48 = I80F48!(0.0001);
+
 pub const EMISSION_FLAG_BORROW_ACTIVE: u64 = 1 << 0;
 pub const EMISSION_FLAG_LENDING_ACTIVE: u64 = 1 << 1;
 pub(crate) const EMISSION_FLAGS: u64 = EMISSION_FLAG_BORROW_ACTIVE | EMISSION_FLAG_LENDING_ACTIVE;

@@ -50,4 +50,6 @@ pub enum MarginfiError {
     ArenaSettingCannotChange,
     #[msg("The Emode config was invalid")] // 6075
     BadEmodeConfig,
+    #[msg("Banks cannot close when they have open positions or emissions outstanding")] // 6081
+    BankCannotClose,
 }

@@ -1,4 +1,5 @@
 mod accrue_bank_interest;
+mod close_bank;
 mod config_bank_emode;
 mod config_bank_oracle;
 mod config_group_fee;
@@ -10,6 +11,7 @@ mod init_global_fee_state;
 mod initialize;
 
 pub use accrue_bank_interest::*;
+pub use close_bank::*;
 pub use config_bank_emode::*;
 pub use config_bank_oracle::*;
 pub use config_group_fee::*;

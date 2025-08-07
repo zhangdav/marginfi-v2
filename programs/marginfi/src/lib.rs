@@ -171,4 +171,8 @@ pub mod marginfi {
     ) -> MarginfiResult {
         marginfi_group::lending_pool_configure_bank_oracle(ctx, setup, oracle)
     }
+
+    pub fn lending_pool_close_bank(ctx: Context<LendingPoolCloseBank>) -> MarginfiResult {
+        marginfi_group::lending_pool_close_bank(ctx)
+    }
 }

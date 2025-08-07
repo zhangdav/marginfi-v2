@@ -1,18 +1,33 @@
-// Checks whether a condition is true at runtime.
-// If not, throws an error (MarginfiError) and returns Err.
-// In non-BPF mode, prints the error message, file name and line number for debugging.
 #[macro_export]
+/// This macro will emit the provided custom program error and log where the error happened,
+/// if the condition is not met.
 macro_rules! check {
     ($cond:expr, $err:expr) => {
         if !($cond) {
             let error_code: $crate::errors::MarginfiError = $err;
-            #[cfg(not(feature = "test_bpf"))]
+            #[cfg(not(feature = "test-bpf"))]
             anchor_lang::prelude::msg!(
                 "Error \"{}\" thrown at {}:{}",
                 error_code,
                 file!(),
                 line!()
             );
+            return Err(error_code.into());
+        }
+    };
+
+    ($cond:expr, $err:expr, $($arg:tt)*) => {
+        if !($cond) {
+            let error_code: $crate::errors::MarginfiError = $err;
+            #[cfg(not(feature = "test-bpf"))]
+            anchor_lang::prelude::msg!(
+                "Error \"{}\" thrown at {}:{}",
+                error_code,
+                file!(),
+                line!()
+            );
+            #[cfg(not(feature = "test-bpf"))]
+            anchor_lang::prelude::msg!($($arg)*);
             return Err(error_code.into());
         }
     };
