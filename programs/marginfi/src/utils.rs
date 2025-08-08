@@ -1,3 +1,5 @@
+use crate::errors::MarginfiError;
+use crate::state::marginfi_group::Bank;
 use crate::state::marginfi_group::WrappedI80F48;
 use crate::MarginfiResult;
 use anchor_lang::prelude::*;
@@ -10,6 +12,7 @@ use anchor_spl::{
             BaseStateWithExtensions, StateWithExtensions,
         },
     },
+    token_interface::Mint,
 };
 use fixed::types::I80F48;
 
@@ -87,5 +90,34 @@ where
 
     fn is_positive_with_tolerance(&self, t: T) -> bool {
         self.gt(&t)
+    }
+}
+
+pub fn maybe_take_bank_mint<'info>(
+    remaining_accounts: &mut &'info [AccountInfo<'info>],
+    bank: &Bank,
+    token_program: &Pubkey,
+) -> MarginfiResult<Option<InterfaceAccount<'info, Mint>>> {
+    match *token_program {
+        anchor_spl::token::ID => Ok(None),
+        anchor_spl::token_2022::ID => {
+            let (maybe_mint, remaining) = remaining_accounts
+                .split_first()
+                .ok_or(MarginfiError::T22MintRequired)?;
+            *remaining_accounts = remaining;
+
+            if bank.mint != *maybe_mint.key {
+                return err!(MarginfiError::T22MintRequired);
+            }
+
+            InterfaceAccount::try_from(maybe_mint)
+                .map(Option::Some)
+                .map_err(|e| {
+                    msg!("failed to parse mint account: {:?}", e);
+                    MarginfiError::T22MintRequired.into()
+                })
+        }
+
+        _ => panic!("unsupported token program"),
     }
 }

@@ -26,6 +26,10 @@ pub enum MarginfiError {
     EmissionsUpdateError,
     #[msg("Unauthorized")] // 6042
     Unauthorized,
+    #[msg("Token22 Banks require mint account as first remaining account")] // 6044
+    T22MintRequired,
+    #[msg("Invalid ATA for global fee account")] // 6045
+    InvalidFeeAta,
     #[msg("Stake pool validation failed: check the stake pool, mint, or sol pool")] // 6048
     StakePoolValidationFailed,
     #[msg("Oracle error: wrong number of accounts")] // 6051
@@ -50,6 +54,8 @@ pub enum MarginfiError {
     ArenaSettingCannotChange,
     #[msg("The Emode config was invalid")] // 6075
     BadEmodeConfig,
+    #[msg("Invalid fees destination account")] // 6077
+    InvalidFeesDestinationAccount,
     #[msg("Banks cannot close when they have open positions or emissions outstanding")] // 6081
     BankCannotClose,
 }

@@ -53,3 +53,14 @@ pub struct LendingPoolBankConfigureOracleEvent {
     pub oracle_setup: u8,
     pub oracle: Pubkey,
 }
+
+#[event]
+pub struct LendingPoolBankCollectFeesEvent {
+    pub header: GroupEventHeader,
+    pub bank: Pubkey,
+    pub mint: Pubkey,
+    pub group_fees_collected: f64,
+    pub group_fees_outstanding: f64,
+    pub insurance_fees_collected: f64,
+    pub insurance_fees_outstanding: f64,
+}

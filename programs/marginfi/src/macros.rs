@@ -116,3 +116,14 @@ macro_rules! check_eq {
         }
     };
 }
+
+#[macro_export]
+macro_rules! bank_signer {
+    ($vault_type: expr, $bank_pk: expr, $authority_bump: expr) => {
+        &[&[
+            $vault_type.get_authority_seed().as_ref(),
+            &$bank_pk.to_bytes(),
+            &[$authority_bump],
+        ]]
+    };
+}
