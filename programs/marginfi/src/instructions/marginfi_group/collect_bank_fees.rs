@@ -193,6 +193,7 @@ pub struct LendingPoolCollectBankFees<'info> {
         ],
         bump = bank.load()?.liquidity_vault_authority_bump
     )]
+    /// CHECK: Asserted by PDA seeds; address is derived and requires no further runtime checks
     pub liquidity_vault_authority: AccountInfo<'info>,
 
     /// CHECK: ⋐ ͡⋄ ω ͡⋄ ⋑

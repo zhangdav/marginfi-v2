@@ -106,3 +106,7 @@ cfg_if::cfg_if! {
         pub const SPL_SINGLE_POOL_ID: Pubkey = pubkey!("SVSPxpvHdN29nkVg9rPapPNDddN5DipNLRUFhyjFThE");
     }
 }
+
+/// Staked SOL assets. Accounts with a STAKED position can only deposit other STAKED assets or SOL
+/// (`ASSET_TAG_SOL`) and can only borrow SOL (`ASSET_TAG_SOL`)
+pub const ASSET_TAG_STAKED: u8 = 2;

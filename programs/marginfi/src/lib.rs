@@ -4,7 +4,7 @@ use prelude::*;
 
 use state::emode::{EmodeEntry, MAX_EMODE_ENTRIES};
 use state::marginfi_group::WrappedI80F48;
-use state::marginfi_group::{BankConfigOpt, InterestRateConfigOpt};
+use state::marginfi_group::{BankConfigOpt, InterestRateConfigOpt, BankConfigCompact};
 
 pub mod constants;
 pub mod errors;
@@ -201,5 +201,12 @@ pub mod marginfi {
         amount: u64,
     ) -> MarginfiResult {
         marginfi_group::lending_pool_withdraw_fees_permissionless(ctx, amount)
+    }
+
+    pub fn lending_pool_add_bank(
+        ctx: Context<LendingPoolAddBank>,
+        bank_config: BankConfigCompact,
+    ) -> MarginfiResult {
+        marginfi_group::lending_pool_add_bank(ctx, bank_config)
     }
 }

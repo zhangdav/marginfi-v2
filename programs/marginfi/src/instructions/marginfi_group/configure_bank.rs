@@ -269,6 +269,7 @@ pub struct LendingPoolUpdateEmissionsParameters<'info> {
         ],
         bump,
     )]
+    /// CHECK: PDA seeds enforce the address; only the account's address is used, no data validation required
     pub emissions_token_account: AccountInfo<'info>,
 
     /// CHECK: Account provided only for funding rewards

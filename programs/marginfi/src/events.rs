@@ -64,3 +64,10 @@ pub struct LendingPoolBankCollectFeesEvent {
     pub insurance_fees_collected: f64,
     pub insurance_fees_outstanding: f64,
 }
+
+#[event]
+pub struct LendingPoolBankCreateEvent {
+    pub header: GroupEventHeader,
+    pub bank: Pubkey,
+    pub mint: Pubkey,
+}

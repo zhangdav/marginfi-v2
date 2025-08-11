@@ -30,6 +30,8 @@ pub enum MarginfiError {
     T22MintRequired,
     #[msg("Invalid ATA for global fee account")] // 6045
     InvalidFeeAta,
+    #[msg("Use add pool permissionless instead")] // 6046
+    AddedStakedPoolManually,
     #[msg("Stake pool validation failed: check the stake pool, mint, or sol pool")] // 6048
     StakePoolValidationFailed,
     #[msg("Oracle error: wrong number of accounts")] // 6051
