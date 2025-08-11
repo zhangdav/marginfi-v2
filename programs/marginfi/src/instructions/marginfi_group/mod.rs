@@ -1,5 +1,7 @@
 mod accrue_bank_interest;
 mod add_pool;
+mod add_pool_common;
+mod add_pool_permissionless;
 mod close_bank;
 mod collect_bank_fees;
 mod config_bank_emode;
@@ -11,10 +13,11 @@ mod configure_bank_lite;
 mod edit_global_fee;
 mod init_global_fee_state;
 mod initialize;
-mod add_pool_common;
 
 pub use accrue_bank_interest::*;
 pub use add_pool::*;
+pub use add_pool_common::*;
+pub use add_pool_permissionless::*;
 pub use close_bank::*;
 pub use collect_bank_fees::*;
 pub use config_bank_emode::*;
@@ -26,4 +29,3 @@ pub use configure_bank_lite::*;
 pub use edit_global_fee::*;
 pub use init_global_fee_state::*;
 pub use initialize::*;
-pub use add_pool_common::*;

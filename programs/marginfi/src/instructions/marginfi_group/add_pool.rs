@@ -5,9 +5,9 @@ use crate::{
         INSURANCE_VAULT_AUTHORITY_SEED, INSURANCE_VAULT_SEED, LIQUIDITY_VAULT_AUTHORITY_SEED,
         LIQUIDITY_VAULT_SEED,
     },
-    log_pool_info,
     errors::MarginfiError,
     events::{GroupEventHeader, LendingPoolBankCreateEvent},
+    log_pool_info,
     state::{
         fee_state::FeeState,
         marginfi_group::{Bank, BankConfigCompact, MarginfiGroup},
