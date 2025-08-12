@@ -1,9 +1,9 @@
-use anchor_lang::prelude::*;
 use crate::constants::{ASSET_TAG_STAKED, PYTH_PUSH_MIGRATED, PYTH_SPONSORED_SHARD_ID};
 use crate::state::marginfi_group::Bank;
+use crate::state::marginfi_group::MarginfiGroup;
 use crate::state::price::PythPushOraclePriceFeed;
 use crate::state::staked_settings::StakedSettings;
-use crate::state::marginfi_group::MarginfiGroup;
+use anchor_lang::prelude::*;
 
 pub fn propagate_staked_settings(ctx: Context<PropagateStakedSettings>) -> Result<()> {
     let settings = ctx.accounts.staked_settings.load()?;

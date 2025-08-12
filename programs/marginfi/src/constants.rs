@@ -24,6 +24,9 @@ pub const STAKED_SETTINGS_SEED: &str = "staked_settings";
 /// Pyth Pull Oracles sponsored by Pyth use this shard ID.
 pub const PYTH_SPONSORED_SHARD_ID: u16 = 0;
 
+/// Pyth Pull Oracles sponsored by Marginfi use this shard ID.
+pub const MARGINFI_SPONSORED_SHARD_ID: u16 = 3301;
+
 /// For testing, this is a typical program fee.
 pub const PROTOCOL_FEE_RATE_DEFAULT: I80F48 = I80F48!(0.025);
 /// For testing, this is a typical program fee.
