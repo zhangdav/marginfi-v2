@@ -1,4 +1,6 @@
-use crate::state::marginfi_group::BankConfigOpt;
+use crate::{
+    instructions::marginfi_group::StakedSettingsEditConfig, state::marginfi_group::BankConfigOpt,
+};
 use anchor_lang::prelude::*;
 
 #[derive(AnchorDeserialize, AnchorSerialize)]
@@ -70,4 +72,10 @@ pub struct LendingPoolBankCreateEvent {
     pub header: GroupEventHeader,
     pub bank: Pubkey,
     pub mint: Pubkey,
+}
+
+#[event]
+pub struct EditStakedSettingsEvent {
+    pub group: Pubkey,
+    pub settings: StakedSettingsEditConfig,
 }

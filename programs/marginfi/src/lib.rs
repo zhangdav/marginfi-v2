@@ -228,4 +228,11 @@ pub mod marginfi {
     pub fn propagate_fee_state(ctx: Context<PropagateFee>) -> MarginfiResult {
         marginfi_group::propagate_fee(ctx)
     }
+
+    pub fn edit_staked_settings(
+        ctx: Context<EditStakedSettings>,
+        settings: StakedSettingsEditConfig,
+    ) -> MarginfiResult {
+        marginfi_group::edit_staked_settings(ctx, settings)
+    }
 }
