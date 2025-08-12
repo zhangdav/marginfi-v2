@@ -235,4 +235,15 @@ pub mod marginfi {
     ) -> MarginfiResult {
         marginfi_group::edit_staked_settings(ctx, settings)
     }
+
+    pub fn init_staked_settings(
+        ctx: Context<InitStakedSettings>,
+        settings: StakedSettingsConfig,
+    ) -> MarginfiResult {
+        marginfi_group::initialize_staked_settings(ctx, settings)
+    }
+
+    pub fn propagate_staked_settings(ctx: Context<PropagateStakedSettings>) -> MarginfiResult {
+        marginfi_group::propagate_staked_settings(ctx)
+    }
 }

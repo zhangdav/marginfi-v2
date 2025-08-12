@@ -3,6 +3,7 @@ use crate::constants::{NATIVE_STAKE_ID, PYTH_ID, SPL_SINGLE_POOL_ID, SWITCHBOARD
 use crate::errors::MarginfiError;
 use crate::prelude::MarginfiResult;
 use crate::state::marginfi_group::BankConfig;
+use pyth_solana_receiver_sdk::PYTH_PUSH_ORACLE_ID;
 use crate::{check, live};
 use anchor_lang::prelude::*;
 use bytemuck::{Pod, Zeroable};
@@ -233,7 +234,17 @@ impl PythPushOraclePriceFeed {
     // TODO: get_confidence_interval
     // TODO: get_ema_price
     // TODO: get_unweighted_price
-    // TODO: find_oracle_address
+
+    /// Find PDA address of a pyth push oracle given a shard_id and feed_id
+    ///
+    /// Pyth sponsored feed id
+    /// `constants::PYTH_PUSH_PYTH_SPONSORED_SHARD_ID = 0`
+    ///
+    /// Marginfi sponsored feed id
+    /// `constants::PYTH_PUSH_MARGINFI_SPONSORED_SHARD_ID = 3301`
+    pub fn find_oracle_address(shard_id: u16, feed_id: &FeedId) -> (Pubkey, u8) {
+        Pubkey::find_program_address(&[&shard_id.to_le_bytes(), feed_id], &PYTH_PUSH_ORACLE_ID)
+    }
 
     pub fn check_ai_and_feed_id(ai: &AccountInfo, feed_id: &FeedId) -> MarginfiResult {
         let price_feed_account = load_price_update_v2_checked(ai)?;
