@@ -224,4 +224,8 @@ pub mod marginfi {
     ) -> MarginfiResult {
         marginfi_group::lending_pool_add_bank_with_seed(ctx, bank_config, bank_seed)
     }
+
+    pub fn propagate_fee_state(ctx: Context<PropagateFee>) -> MarginfiResult {
+        marginfi_group::propagate_fee(ctx)
+    }
 }
