@@ -59,6 +59,8 @@ pub fn lending_pool_handle_bankruptcy<'info>(
     health_cache.program_version = PROGRAM_VERSION;
     RiskEngine::new(&marginfi_account, ctx.remaining_accounts)?
         .check_account_bankrupt(&mut Some(&mut health_cache))?;
+    health_cache.set_engine_ok(true);
+    marginfi_account.health_cache = health_cache;
 }
 
 #[derive(Accounts)]

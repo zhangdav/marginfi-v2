@@ -15,7 +15,7 @@ use crate::{check, check_eq, debug, math_error};
 use anchor_lang::prelude::*;
 use bytemuck::{Pod, Zeroable};
 use fixed::types::I80F48;
-use std::cmp::{max, min};
+use std::cmp::max;
 use type_layout::TypeLayout;
 
 pub const ACCOUNT_IN_FLASHLOAN: u64 = 1 << 1;
@@ -220,6 +220,34 @@ impl<'info> BankAccountWithPriceFeed<'_, 'info> {
             }
             RiskTier::Isolated => Ok((I80F48::ZERO, I80F48::ZERO, 0)),
         }
+    }
+
+    #[inline(always)]
+    fn calc_weighted_liab_value(
+        &self,
+        requirement_type: RequirementType,
+        bank: &Bank,
+    ) -> MarginfiResult<(I80F48, I80F48)> {
+        let (price_feed, _) = self.try_get_price_feed();
+        let price_feed = price_feed?;
+        let liability_weight = bank
+            .config
+            .get_weight(requirement_type, BalanceSide::Liabilities);
+
+        let higher_price = price_feed.get_price_of_type(
+            requirement_type.get_oracle_price_type(),
+            Some(PriceBias::High),
+            bank.config.oracle_max_confidence,
+        )?;
+
+        let value = calc_value(
+            bank.get_liability_amount(self.balance.liability_shares.into())?,
+            higher_price,
+            bank.mint_decimals,
+            Some(liability_weight),
+        )?;
+
+        Ok((value, higher_price))
     }
 
     fn try_get_price_feed(&self) -> (MarginfiResult<&OraclePriceFeedAdapter>, u32) {

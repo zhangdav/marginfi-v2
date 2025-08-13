@@ -681,7 +681,49 @@ impl SwitchboardPullPriceFeed {
         Ok(price)
     }
 
-    fn get_confidence_interval(&self, oracle_max_confidence: u32) -> MarginfiResult<I80F48> {}
+    fn get_confidence_interval(&self, oracle_max_confidence: u32) -> MarginfiResult<I80F48> {
+        let conf_interval: I80F48 = I80F48::from_num(self.feed.result.std_dev)
+            .checked_div(EXP_10_I80F48[switchboard_on_demand::PRECISION as usize])
+            .ok_or_else(math_error!())?
+            .checked_mul(STD_DEV_MULTIPLE)
+            .ok_or_else(math_error!())?;
+
+        let price = self.get_price()?;
+
+        let oracle_max_confidence = if oracle_max_confidence > 0 {
+            I80F48::from_num(oracle_max_confidence)
+        } else {
+            U32_MAX_DIV_10
+        };
+        let max_conf = price
+            .checked_mul(oracle_max_confidence)
+            .ok_or_else(math_error!())?
+            .checked_div(U32_MAX)
+            .ok_or_else(math_error!())?;
+
+        if conf_interval > max_conf {
+            let conf_interval = conf_interval.to_num::<f64>();
+            let max_conf = max_conf.to_num::<f64>();
+            msg!("conf was {:?}, but max is {:?}", conf_interval, max_conf);
+            return err!(MarginfiError::OracleMaxConfidenceExceeded);
+        }
+
+        let max_conf_interval = price
+            .checked_mul(MAX_CONF_INTERVAL)
+            .ok_or_else(math_error!())?;
+
+        assert!(
+            max_conf_interval >= I80F48::ZERO,
+            "Negative max confidence interval"
+        );
+
+        assert!(
+            conf_interval >= I80F48::ZERO,
+            "Negative confidence interval"
+        );
+
+        Ok(min(conf_interval, max_conf_interval))
+    }
 }
 
 #[cfg_attr(feature = "client", derive(Clone, Debug))]
