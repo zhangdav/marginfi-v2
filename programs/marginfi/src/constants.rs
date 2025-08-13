@@ -1,6 +1,7 @@
 use anchor_lang::prelude::*;
 use fixed::types::I80F48;
 use fixed_macro::types::I80F48;
+use pyth_solana_receiver_sdk::price_update::VerificationLevel;
 
 pub const MAX_ORACLE_KEYS: usize = 5;
 pub const ASSET_TAG_DEFAULT: u8 = 0;
@@ -27,6 +28,8 @@ pub const PYTH_SPONSORED_SHARD_ID: u16 = 0;
 /// Pyth Pull Oracles sponsored by Marginfi use this shard ID.
 pub const MARGINFI_SPONSORED_SHARD_ID: u16 = 3301;
 
+pub const PROGRAM_VERSION: u8 = 2;
+
 /// For testing, this is a typical program fee.
 pub const PROTOCOL_FEE_RATE_DEFAULT: I80F48 = I80F48!(0.025);
 /// For testing, this is a typical program fee.
@@ -41,8 +44,17 @@ pub const PYTH_PUSH_MIGRATED: u8 = 1 << 0;
 pub const FREEZE_SETTINGS: u64 = 1 << 3;
 pub const CLOSE_ENABLED_FLAG: u64 = 1 << 4;
 
+pub const MIN_PYTH_PUSH_VERIFICATION_LEVEL: VerificationLevel = VerificationLevel::Full;
+
 /// Comparios threshold used to account for arithmetic artifacts on balances
 pub const ZERO_AMOUNT_THRESHOLD: I80F48 = I80F48!(0.0001);
+
+/// This is USD denominated, so 0.001 = $0.1
+pub const BANKRUPT_THRESHOLD: I80F48 = I80F48!(0.1);
+
+/// Any balance below 1 SPL token amount is treated as none,
+/// this is to account for any artifacts resulting from binary fraction arithemtic.
+pub const EMPTY_BALANCE_THRESHOLD: I80F48 = I80F48!(1);
 
 pub const EMISSION_FLAG_BORROW_ACTIVE: u64 = 1 << 0;
 pub const EMISSION_FLAG_LENDING_ACTIVE: u64 = 1 << 1;
@@ -118,3 +130,5 @@ cfg_if::cfg_if! {
 /// Staked SOL assets. Accounts with a STAKED position can only deposit other STAKED assets or SOL
 /// (`ASSET_TAG_SOL`) and can only borrow SOL (`ASSET_TAG_SOL`)
 pub const ASSET_TAG_STAKED: u8 = 2;
+
+pub const ASSET_TAG_SOL: u8 = 1;

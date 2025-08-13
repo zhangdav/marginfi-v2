@@ -6,6 +6,10 @@ pub enum MarginfiError {
     BankAssetCapacityExceeded,
     #[msg("Invalid transfer")] // 6004
     InvalidTransfer,
+    #[msg("Invalid bank account")] // 6008
+    InvalidBankAccount,
+    #[msg("Account is not bankrupt")] // 6013
+    AccountNotBankrupt,
     #[msg("Invalid group config")] // 6015
     InvalidConfig,
     #[msg("Bank paused")] // 6016
@@ -24,6 +28,8 @@ pub enum MarginfiError {
     OracleNotSetup,
     #[msg("Update emissions error")] //6034
     EmissionsUpdateError,
+    #[msg("Illegal action during flashloan")] // 6037
+    AccountInFlashloan,
     #[msg("Unauthorized")] // 6042
     Unauthorized,
     #[msg("Token22 Banks require mint account as first remaining account")] // 6044
@@ -32,16 +38,30 @@ pub enum MarginfiError {
     InvalidFeeAta,
     #[msg("Use add pool permissionless instead")] // 6046
     AddedStakedPoolManually,
+    #[msg("Staked SOL accounts can only deposit staked assets and borrow SOL")] // 6047
+    AssetTagMismatch,
     #[msg("Stake pool validation failed: check the stake pool, mint, or sol pool")] // 6048
     StakePoolValidationFailed,
+    #[msg("Switchboard oracle: stale price")] // 6049
+    SwitchboardStalePrice,
+    #[msg("Pyth Push oracle: stale price")] // 6050
+    PythPushStalePrice,
     #[msg("Oracle error: wrong number of accounts")] // 6051
     WrongNumberOfOracleAccounts,
     #[msg("Oracle error: wrong account keys")] // 6052
     WrongOracleAccountKeys,
     #[msg("Pyth Push oracle: wrong account owner")] // 6053
     PythPushWrongAccountOwner,
+    #[msg("Staked Pyth Push oracle: wrong account owner")] // 6054
+    StakedPythPushWrongAccountOwner,
     #[msg("Pyth Push oracle: mismatched feed id")] // 6055
     PythPushMismatchedFeedId,
+    #[msg("Pyth Push oracle: insufficient verification level")] // 6056
+    PythPushInsufficientVerificationLevel,
+    #[msg("Pyth Push oracle: feed id must be 32 Bytes")] // 6057
+    PythPushFeedIdMustBe32Bytes,
+    #[msg("Pyth Push oracle: feed id contains non-hex characters")] // 6058
+    PythPushFeedIdNonHexCharacter,
     #[msg("Switchboard oracle: wrong account owner")] // 6059
     SwitchboardWrongAccountOwner,
     #[msg("Pyth Push oracle: invalid account")] // 6060
@@ -56,8 +76,35 @@ pub enum MarginfiError {
     ArenaSettingCannotChange,
     #[msg("The Emode config was invalid")] // 6075
     BadEmodeConfig,
+    #[msg("TWAP window size does not match expected duration")] // 6076
+    PythPushInvalidWindowSize,
     #[msg("Invalid fees destination account")] // 6077
     InvalidFeesDestinationAccount,
     #[msg("Banks cannot close when they have open positions or emissions outstanding")] // 6081
     BankCannotClose,
+}
+
+impl From<pyth_solana_receiver_sdk::error::GetPriceError> for MarginfiError {
+    fn from(e: pyth_solana_receiver_sdk::error::GetPriceError) -> Self {
+        match e {
+            pyth_solana_receiver_sdk::error::GetPriceError::PriceTooOld => {
+                MarginfiError::PythPushStalePrice
+            }
+            pyth_solana_receiver_sdk::error::GetPriceError::MismatchedFeedId => {
+                MarginfiError::PythPushMismatchedFeedId
+            }
+            pyth_solana_receiver_sdk::error::GetPriceError::InsufficientVerificationLevel => {
+                MarginfiError::PythPushInsufficientVerificationLevel
+            }
+            pyth_solana_receiver_sdk::error::GetPriceError::FeedIdMustBe32Bytes => {
+                MarginfiError::PythPushFeedIdMustBe32Bytes
+            }
+            pyth_solana_receiver_sdk::error::GetPriceError::FeedIdNonHexCharacter => {
+                MarginfiError::PythPushFeedIdNonHexCharacter
+            }
+            pyth_solana_receiver_sdk::error::GetPriceError::InvalidWindowSize => {
+                MarginfiError::PythPushInvalidWindowSize
+            }
+        }
+    }
 }

@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::errors::MarginfiError;
 use crate::prelude::MarginfiResult;
 use crate::state::marginfi_group::WrappedI80F48;
@@ -172,4 +174,71 @@ impl EmodeEntry {
     pub fn tag_equals(&self, tag: u16) -> bool {
         self.collateral_bank_emode_tag == tag
     }
+}
+
+pub fn reconcile_emode_configs<I>(configs: I) -> EmodeConfig
+where
+    I: IntoIterator<Item = EmodeConfig>,
+{
+    // TODO benchmark this in the mock program
+    let mut iter = configs.into_iter();
+    // Pull off the first config (if any)
+    let first = match iter.next() {
+        None => return EmodeConfig::zeroed(),
+        Some(cfg) => cfg,
+    };
+
+    let mut merged_entries: BTreeMap<u16, (EmodeEntry, usize)> = BTreeMap::new();
+    let mut num_configs = 1;
+
+    // A helper to merge an EmodeConfig into the map
+    let mut merge_cfg = |cfg: EmodeConfig| {
+        for entry in cfg.entries.iter() {
+            if entry.is_empty() {
+                continue;
+            }
+            let tag = entry.collateral_bank_emode_tag;
+            merged_entries
+                .entry(tag)
+                .and_modify(|(merged, cnt)| {
+                    merged.flags = merged.flags.min(entry.flags);
+                    let cur_i: I80F48 = merged.asset_weight_init.into();
+                    let new_i: I80F48 = entry.asset_weight_init.into();
+                    if new_i < cur_i {
+                        merged.asset_weight_init = entry.asset_weight_init;
+                    }
+                    let cur_m: I80F48 = merged.asset_weight_maint.into();
+                    let new_m: I80F48 = entry.asset_weight_maint.into();
+                    if new_m < cur_m {
+                        merged.asset_weight_maint = entry.asset_weight_maint;
+                    }
+                    *cnt += 1;
+                })
+                .or_insert((*entry, 1));
+        }
+    };
+
+    // First config
+    merge_cfg(first);
+
+    // All following configs
+    for cfg in iter {
+        num_configs += 1;
+        merge_cfg(cfg);
+    }
+
+    // Cllect only those tags seen in *every* config:
+    let mut buf: [EmodeEntry; MAX_EMODE_ENTRIES] = [EmodeEntry::zeroed(); MAX_EMODE_ENTRIES];
+    let mut buf_len = 0;
+
+    for (_tag, (entry, cnt)) in merged_entries {
+        // if cnt of appearances = num of configs, then it was in every config.
+        if cnt == num_configs {
+            buf[buf_len] = entry;
+            buf_len += 1;
+        }
+    }
+
+    // Sort what we have and pad the rest with zeroed space
+    EmodeConfig::from_entries(&buf[..buf_len])
 }
