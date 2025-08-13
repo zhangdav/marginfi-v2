@@ -1,7 +1,8 @@
 use crate::check_eq;
 use crate::constants::{
-    MIN_PYTH_PUSH_VERIFICATION_LEVEL, NATIVE_STAKE_ID, PYTH_ID, SPL_SINGLE_POOL_ID,
-    SWITCHBOARD_PULL_ID,
+    CONF_INTERVAL_MULTIPLE, EXP_10_I80F48, MAX_CONF_INTERVAL, MIN_PYTH_PUSH_VERIFICATION_LEVEL,
+    NATIVE_STAKE_ID, PYTH_ID, SPL_SINGLE_POOL_ID, STD_DEV_MULTIPLE, SWITCHBOARD_PULL_ID, U32_MAX,
+    U32_MAX_DIV_10,
 };
 use crate::errors::MarginfiError;
 use crate::prelude::MarginfiResult;
@@ -12,10 +13,10 @@ use anchor_lang::solana_program::{borsh1::try_from_slice_unchecked, stake::state
 use anchor_spl::token::Mint;
 use bytemuck::{Pod, Zeroable};
 use enum_dispatch::enum_dispatch;
-use fixed::traits::LosslessTryInto;
+use fixed::types::I80F48;
 use pyth_solana_receiver_sdk::price_update::{self, FeedId, PriceUpdateV2};
 use pyth_solana_receiver_sdk::PYTH_PUSH_ORACLE_ID;
-use std::cell::Ref;
+use std::{cell::Ref, cmp::min};
 use switchboard_on_demand::{
     CurrentResult, Discriminator, PullFeedAccountData, SPL_TOKEN_PROGRAM_ID,
 };
@@ -48,6 +49,16 @@ impl OracleSetup {
 }
 
 // TODO: PriceBias
+
+#[enum_dispatch]
+pub trait PriceAdapter {
+    fn get_price_of_type(
+        &self,
+        oracle_price_type: OraclePriceType,
+        bias: Option<PriceBias>,
+        oracle_max_confidence: u32,
+    ) -> MarginfiResult<I80F48>;
+}
 
 #[enum_dispatch(PriceAdapter)]
 #[cfg_attr(feature = "client", derive(Clone))]
@@ -456,11 +467,64 @@ impl PythPushOraclePriceFeed {
             ema_price: Box::new(ema_price),
         })
     }
+
     // TODO: load_unchecked
     // TODO: peek_feed_id
-    // TODO: get_confidence_interval
-    // TODO: get_ema_price
-    // TODO: get_unweighted_price
+
+    fn get_confidence_interval(
+        &self,
+        use_ema: bool,
+        oracle_max_confidence: u32,
+    ) -> MarginfiResult<I80F48> {
+        let price = if use_ema {
+            &self.ema_price
+        } else {
+            &self.price
+        };
+
+        let conf_interval =
+            pyth_price_components_to_i80f48(I80F48::from_num(price.conf), price.exponent)?
+                .checked_mul(CONF_INTERVAL_MULTIPLE)
+                .ok_or_else(math_error!())?;
+
+        let price = pyth_price_components_to_i80f48(I80F48::from_num(price.price), price.exponent)?;
+
+        // Fail the price fetch if confidence > price * oracle_max_confidence
+        let oracle_max_confidence = if oracle_max_confidence > 0 {
+            I80F48::from_num(oracle_max_confidence)
+        } else {
+            // The default max confidence is 10%
+            U32_MAX_DIV_10
+        };
+        let max_conf = price
+            .checked_mul(oracle_max_confidence)
+            .ok_or_else(math_error!())?
+            .checked_div(U32_MAX)
+            .ok_or_else(math_error!())?;
+        if conf_interval > max_conf {
+            let conf_interval = conf_interval.to_num::<f64>();
+            let max_conf = max_conf.to_num::<f64>();
+            msg!("conf was {:?}, but max is {:?}", conf_interval, max_conf);
+            return err!(MarginfiError::OracleMaxConfidenceExceeded);
+        }
+
+        // Cap confidence interval to 5% of price regardless
+        let capped_conf_interval = price
+            .checked_mul(MAX_CONF_INTERVAL)
+            .ok_or_else(math_error!())?;
+
+        assert!(
+            capped_conf_interval >= I80F48::ZERO,
+            "Negative max confidence interval"
+        );
+
+        assert!(
+            conf_interval >= I80F48::ZERO,
+            "Negative confidence interval"
+        );
+
+        Ok(min(conf_interval, capped_conf_interval))
+    }
 
     /// Find PDA address of a pyth push oracle given a shard_id and feed_id
     ///
@@ -484,9 +548,80 @@ impl PythPushOraclePriceFeed {
 
         Ok(())
     }
+
+    #[inline(always)]
+    fn get_ema_price(&self) -> MarginfiResult<I80F48> {
+        pyth_price_components_to_i80f48(
+            I80F48::from_num(self.ema_price.price),
+            self.ema_price.exponent,
+        )
+    }
+
+    #[inline(always)]
+    fn get_unweighted_price(&self) -> MarginfiResult<I80F48> {
+        pyth_price_components_to_i80f48(I80F48::from_num(self.price.price), self.price.exponent)
+    }
 }
 
-// TODO: impl PriceAdapter for PythPushOraclePriceFeed
+impl PriceAdapter for PythPushOraclePriceFeed {
+    fn get_price_of_type(
+        &self,
+        price_type: OraclePriceType,
+        bias: Option<PriceBias>,
+        oracle_max_confidence: u32,
+    ) -> MarginfiResult<I80F48> {
+        let price = match price_type {
+            OraclePriceType::TimeWeighted => self.get_ema_price()?,
+            OraclePriceType::RealTime => self.get_unweighted_price()?,
+        };
+
+        match bias {
+            None => Ok(price),
+            Some(price_bias) => {
+                let confidence_interval = self.get_confidence_interval(
+                    matches!(price_type, OraclePriceType::TimeWeighted),
+                    oracle_max_confidence,
+                )?;
+
+                match price_bias {
+                    PriceBias::Low => Ok(price
+                        .checked_sub(confidence_interval)
+                        .ok_or_else(math_error!())?),
+                    PriceBias::High => Ok(price
+                        .checked_add(confidence_interval)
+                        .ok_or_else(math_error!())?),
+                }
+            }
+        }
+    }
+}
+
+impl PriceAdapter for SwitchboardPullPriceFeed {
+    fn get_price_of_type(
+        &self,
+        _price_type: OraclePriceType,
+        bias: Option<PriceBias>,
+        oracle_max_confidence: u32,
+    ) -> MarginfiResult<I80F48> {
+        let price = self.get_price()?;
+
+        match bias {
+            Some(price_bias) => {
+                let confidence_interval = self.get_confidence_interval(oracle_max_confidence)?;
+
+                match price_bias {
+                    PriceBias::Low => Ok(price
+                        .checked_sub(confidence_interval)
+                        .ok_or_else(math_error!())?),
+                    PriceBias::High => Ok(price
+                        .checked_add(confidence_interval)
+                        .ok_or_else(math_error!())?),
+                }
+            }
+            None => Ok(price),
+        }
+    }
+}
 
 #[cfg_attr(feature = "client", derive(Clone, Debug))]
 pub struct SwitchboardPullPriceFeed {
@@ -536,11 +671,18 @@ impl SwitchboardPullPriceFeed {
         Ok(())
     }
 
-    // TODO: get_price
-    // TODO: get_confidence_interval
-}
+    fn get_price(&self) -> MarginfiResult<I80F48> {
+        let sw_result = self.feed.result;
 
-// TODO: impl PriceAdapter for SwitchboardPullPriceFeed
+        let price = I80F48::from_num(sw_result.value)
+            .checked_div(EXP_10_I80F48[switchboard_on_demand::PRECISION as usize])
+            .ok_or_else(math_error!())?;
+
+        Ok(price)
+    }
+
+    fn get_confidence_interval(&self, oracle_max_confidence: u32) -> MarginfiResult<I80F48> {}
+}
 
 #[cfg_attr(feature = "client", derive(Clone, Debug))]
 pub struct LitePullFeedAccountData {
@@ -582,6 +724,25 @@ pub fn check_ai_and_feed_id(ai: &AccountInfo, feed_id: &FeedId) -> MarginfiResul
     );
 
     Ok(())
+}
+
+#[inline(always)]
+fn pyth_price_components_to_i80f48(price: I80F48, exponent: i32) -> MarginfiResult<I80F48> {
+    let scaling_factor = EXP_10_I80F48[exponent.unsigned_abs() as usize];
+
+    let price = if exponent == 0 {
+        price
+    } else if exponent < 0 {
+        price
+            .checked_div(scaling_factor)
+            .ok_or_else(math_error!())?
+    } else {
+        price
+            .checked_mul(scaling_factor)
+            .ok_or_else(math_error!())?
+    };
+
+    Ok(price)
 }
 
 // TODO remove when swb fixes the alignment issue in their crate
@@ -641,3 +802,9 @@ pub fn load_price_update_v2_checked(ai: &AccountInfo) -> MarginfiResult<PriceUpd
 }
 
 // TODO: pyth_price_components_to_i80f48
+
+#[derive(Copy, Clone, Debug)]
+pub enum PriceBias {
+    Low,
+    High,
+}

@@ -2,6 +2,10 @@ use anchor_lang::prelude::*;
 
 #[error_code]
 pub enum MarginfiError {
+    #[msg("Internal Marginfi logic error")] // 6000
+    InternalLogicError,
+    #[msg("Invalid bank index")] // 6001
+    BankNotFound,
     #[msg("Bank deposit capacity exceeded")] // 6003
     BankAssetCapacityExceeded,
     #[msg("Invalid transfer")] // 6004
@@ -80,8 +84,16 @@ pub enum MarginfiError {
     PythPushInvalidWindowSize,
     #[msg("Invalid fees destination account")] // 6077
     InvalidFeesDestinationAccount,
+    #[msg("Oracle max confidence exceeded: try again later")] // 6080
+    OracleMaxConfidenceExceeded,
     #[msg("Banks cannot close when they have open positions or emissions outstanding")] // 6081
     BankCannotClose,
+}
+
+impl From<MarginfiError> for ProgramError {
+    fn from(e: MarginfiError) -> Self {
+        ProgramError::Custom(e as u32)
+    }
 }
 
 impl From<pyth_solana_receiver_sdk::error::GetPriceError> for MarginfiError {
@@ -105,6 +117,14 @@ impl From<pyth_solana_receiver_sdk::error::GetPriceError> for MarginfiError {
             pyth_solana_receiver_sdk::error::GetPriceError::InvalidWindowSize => {
                 MarginfiError::PythPushInvalidWindowSize
             }
+        }
+    }
+}
+impl From<u32> for MarginfiError {
+    fn from(value: u32) -> Self {
+        match value {
+            6001 => MarginfiError::BankNotFound,
+            _ => MarginfiError::InternalLogicError,
         }
     }
 }

@@ -7,14 +7,15 @@ use crate::errors::MarginfiError;
 use crate::prelude::MarginfiResult;
 use crate::state::emode::{reconcile_emode_configs, EmodeConfig};
 use crate::state::health_cache::HealthCache;
-use crate::state::marginfi_group::{Bank, WrappedI80F48};
-use crate::state::price::OraclePriceType;
+use crate::state::marginfi_group::{Bank, RiskTier, WrappedI80F48};
+use crate::state::price::PriceAdapter;
+use crate::state::price::{OraclePriceType, PriceBias};
 use crate::{assert_struct_align, assert_struct_size};
-use crate::{check, check_eq, math_error, debug};
+use crate::{check, check_eq, debug, math_error};
 use anchor_lang::prelude::*;
 use bytemuck::{Pod, Zeroable};
-use fixed::consts::E;
 use fixed::types::I80F48;
+use std::cmp::{max, min};
 use type_layout::TypeLayout;
 
 pub const ACCOUNT_IN_FLASHLOAN: u64 = 1 << 1;
@@ -135,7 +136,7 @@ impl<'info> BankAccountWithPriceFeed<'_, 'info> {
                     }
                     BalanceSide::Liabilities => {
                         let (value, price) =
-                            self.calc_weighted_liability_value(requirement_type, bank)?;
+                            self.calc_weighted_liab_value(requirement_type, bank)?;
                         Ok((I80F48::ZERO, value, price, 0))
                     }
                 }
@@ -160,9 +161,90 @@ impl<'info> BankAccountWithPriceFeed<'_, 'info> {
                 let (price_feed, err_code) = self.try_get_price_feed();
 
                 if matches!(
-                    &price_feed, requirement_type),
+                    (&price_feed, requirement_type),
                     (&Err(_), RequirementType::Initial)
+                ) {
+                    debug!("Skipping stale oracle");
+                    return Ok((I80F48::ZERO, I80F48::ZERO, err_code));
+                }
+
+                let price_feed = price_feed?;
+
+                // If an emode entry exists for this bank's emode tag in the reconciled config of
+                // all borrowing banks, use its weight, otherwise use the weight designated on the
+                // collateral bank itself. If the bank's weight is higher, always use that weight.
+                let mut asset_weight =
+                    if let Some(emode_entry) = emode_config.find_with_tag(bank.emode.emode_tag) {
+                        let bank_weight = bank
+                            .config
+                            .get_weight(requirement_type, BalanceSide::Assets);
+                        let emode_weight = match requirement_type {
+                            RequirementType::Initial => I80F48::from(emode_entry.asset_weight_init),
+                            RequirementType::Maintenance => {
+                                I80F48::from(emode_entry.asset_weight_maint)
+                            }
+                            // Note: For equity (which is only used for bankruptcies) emode does not
+                            // apply, as the asset weight is always 1
+                            RequirementType::Equity => I80F48::ONE,
+                        };
+                        max(bank_weight, emode_weight)
+                    } else {
+                        bank.config
+                            .get_weight(requirement_type, BalanceSide::Assets)
+                    };
+
+                let lower_price = price_feed.get_price_of_type(
+                    requirement_type.get_oracle_price_type(),
+                    Some(PriceBias::Low),
+                    bank.config.oracle_max_confidence,
+                )?;
+
+                if matches!(requirement_type, RequirementType::Initial) {
+                    if let Some(discount) =
+                        bank.maybe_get_asset_weight_init_discount(lower_price)?
+                    {
+                        asset_weight = asset_weight
+                            .checked_mul(discount)
+                            .ok_or_else(math_error!())?;
+                    }
+                }
+
+                let value = calc_value(
+                    bank.get_asset_amount(self.balance.asset_shares.into())?,
+                    lower_price,
+                    bank.mint_decimals,
+                    Some(asset_weight),
+                )?;
+
+                Ok((value, lower_price, 0))
             }
+            RiskTier::Isolated => Ok((I80F48::ZERO, I80F48::ZERO, 0)),
+        }
+    }
+
+    fn try_get_price_feed(&self) -> (MarginfiResult<&OraclePriceFeedAdapter>, u32) {
+        match self.price_feed.as_ref() {
+            Ok(a) => (Ok(a), 0),
+            #[allow(unused_variables)]
+            Err(e) => match e {
+                anchor_lang::error::Error::AnchorError(inner) => {
+                    let error_code = inner.as_ref().error_code_number;
+                    let custom_error = MarginfiError::from(error_code);
+                    (Err(error!(custom_error)), error_code)
+                }
+                anchor_lang::error::Error::ProgramError(inner) => {
+                    match inner.as_ref().program_error {
+                        ProgramError::Custom(error_code) => {
+                            let custom_error = MarginfiError::from(error_code);
+                            (Err(error!(custom_error)), error_code)
+                        }
+                        _ => (
+                            Err(error!(MarginfiError::InternalLogicError)),
+                            MarginfiError::InternalLogicError as u32,
+                        ),
+                    }
+                }
+            },
         }
     }
 

@@ -63,6 +63,13 @@ pub(crate) const GROUP_FLAGS: u64 = PERMISSIONLESS_BAD_DEBT_SETTLEMENT_FLAG | FR
 
 pub const SECONDS_PER_YEAR: I80F48 = I80F48!(31_536_000);
 
+pub const CONF_INTERVAL_MULTIPLE: I80F48 = I80F48!(2.12);
+pub const MAX_CONF_INTERVAL: I80F48 = I80F48!(0.05);
+
+pub const U32_MAX: I80F48 = I80F48!(4_294_967_295);
+pub const U32_MAX_DIV_10: I80F48 = I80F48!(429_496_730);
+pub const STD_DEV_MULTIPLE: I80F48 = I80F48!(1.96);
+
 /// Due to real-world constraints, oracles using an age less than this value are typically too
 /// unreliable, and we want to restrict pools from picking an oracle that is effectively unusable
 pub const ORACLE_MIN_AGE: u16 = 30;
