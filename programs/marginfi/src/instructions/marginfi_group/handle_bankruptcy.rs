@@ -7,9 +7,10 @@ use crate::{
     debug,
     errors::MarginfiError,
     math_error,
+    events::{AccountEventHeader, LendingPoolBankHandleBankruptcyEvent},
     state::{
         health_cache::HealthCache,
-        marginfi_account::{MarginfiAccount, RiskEngine},
+        marginfi_account::{MarginfiAccount, RiskEngine, ACCOUNT_DISABLED, BankAccountWrapper},
         marginfi_group::{Bank, BankVaultType, MarginfiGroup},
     },
     utils, MarginfiResult,
@@ -61,6 +62,126 @@ pub fn lending_pool_handle_bankruptcy<'info>(
         .check_account_bankrupt(&mut Some(&mut health_cache))?;
     health_cache.set_engine_ok(true);
     marginfi_account.health_cache = health_cache;
+
+    let mut bank = bank_loader.load_mut()?;
+    let group = &marginfi_group_loader.load()?;
+
+    bank.accrue_interest(
+        clock.unix_timestamp,
+        group,
+        #[cfg(not(feature = "client"))]
+        bank_loader.key(),
+    )?;
+
+    let lending_account_balance = marginfi_account
+        .lending_account
+        .balances
+        .iter_mut()
+        .find(|balance| balance.is_active() && balance.bank_pk == bank_loader.key());
+
+    check!(
+        lending_account_balance.is_some(),
+        MarginfiError::LendingAccountBalanceNotFound
+    );
+
+    let lending_account_balance = lending_account_balance.unwrap();
+
+    let bad_debt = bank.get_liability_amount(lending_account_balance.liability_shares.into())?;
+
+    check!(
+        bad_debt > ZERO_AMOUNT_THRESHOLD,
+        MarginfiError::BalanceNotBadDebt
+    );
+
+    let (covered_by_insurance, socialized_loss) = {
+        let available_insurance_fund: I80F48 = maybe_bank_mint
+            .as_ref()
+            .map(|mint| {
+                utils::calculate_post_fee_spl_deposit_amount(
+                    mint.to_account_info(),
+                    insurance_vault.amount,
+                    clock.epoch,
+                )
+            })
+            .transpose()?
+            .unwrap_or(insurance_vault.amount)
+            .into();
+
+        let covered_by_insurance = min(bad_debt, available_insurance_fund);
+        let socialized_loss = max(bad_debt - covered_by_insurance, I80F48::ZERO);
+
+        (covered_by_insurance, socialized_loss)
+    };
+
+    // Cover bad debt with insurance funds.
+    let covered_by_insurance_rounded_up: u64 = covered_by_insurance
+        .checked_ceil()
+        .ok_or_else(math_error!())?
+        .checked_to_num()
+        .ok_or_else(math_error!())?;
+    debug!(
+        "covered_by_insurance_rounded_up: {}; socialized loss {}",
+        covered_by_insurance_rounded_up, socialized_loss
+    );
+
+    let insurance_coverage_deposit_pre_fee = maybe_bank_mint
+        .as_ref()
+        .map(|mint| {
+            utils::calculate_pre_fee_spl_deposit_amount(
+                mint.to_account_info(),
+                covered_by_insurance_rounded_up,
+                clock.epoch,
+            )
+        })
+        .transpose()?
+        .unwrap_or(covered_by_insurance_rounded_up);
+
+    bank.withdraw_spl_transfer(
+        insurance_coverage_deposit_pre_fee,
+        ctx.accounts.insurance_vault.to_account_info(),
+        ctx.accounts.liquidity_vault.to_account_info(),
+        ctx.accounts.insurance_vault_authority.to_account_info(),
+        maybe_bank_mint.as_ref(),
+        token_program.to_account_info(),
+        bank_signer!(
+            BankVaultType::Insurance,
+            bank_loader.key(),
+            bank.insurance_vault_authority_bump
+        ),
+        ctx.remaining_accounts,
+    )?;
+
+    // Socialize bad debt among depositors.
+    bank.socialize_loss(socialized_loss)?;
+
+    // Settle bad debt.
+    // The liabilities of this account and global total liabilities are reduced by `bad_debt`
+    BankAccountWrapper::find(
+        &bank_loader.key(),
+        &mut bank,
+        &mut marginfi_account.lending_account,
+    )?
+    .repay(bad_debt)?;
+
+    bank.update_bank_cache(group)?;
+
+    marginfi_account.set_flag(ACCOUNT_DISABLED);
+
+    emit!(LendingPoolBankHandleBankruptcyEvent {
+        header: AccountEventHeader {
+            signer: Some(ctx.accounts.signer.key()),
+            marginfi_account: marginfi_account_loader.key(),
+            marginfi_account_authority: marginfi_account.authority,
+            marginfi_group: marginfi_account.group,
+        },
+        bank: bank_loader.key(),
+        mint: bank.mint,
+        bad_debt: bad_debt.to_num::<f64>(),
+        covered_amount: covered_by_insurance.to_num::<f64>(),
+        socialized_amount: socialized_loss.to_num::<f64>(),
+    });
+
+    Ok(())
 }
 
 #[derive(Accounts)]

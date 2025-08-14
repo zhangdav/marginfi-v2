@@ -9,6 +9,14 @@ pub struct GroupEventHeader {
     pub marginfi_group: Pubkey,
 }
 
+#[derive(AnchorDeserialize, AnchorSerialize)]
+pub struct AccountEventHeader {
+    pub signer: Option<Pubkey>,
+    pub marginfi_account: Pubkey,
+    pub marginfi_account_authority: Pubkey,
+    pub marginfi_group: Pubkey,
+}
+
 #[event]
 pub struct LendingPoolBankAccrueInterestEvent {
     pub header: GroupEventHeader,
@@ -78,4 +86,14 @@ pub struct LendingPoolBankCreateEvent {
 pub struct EditStakedSettingsEvent {
     pub group: Pubkey,
     pub settings: StakedSettingsEditConfig,
+}
+
+#[event]
+pub struct LendingPoolBankHandleBankruptcyEvent {
+    pub header: AccountEventHeader,
+    pub bank: Pubkey,
+    pub mint: Pubkey,
+    pub bad_debt: f64,
+    pub covered_amount: f64,
+    pub socialized_amount: f64,
 }

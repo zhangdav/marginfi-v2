@@ -121,3 +121,30 @@ pub fn maybe_take_bank_mint<'info>(
         _ => panic!("unsupported token program"),
     }
 }
+
+pub fn calculate_post_fee_spl_deposit_amount(
+    mint_ai: AccountInfo,
+    input_amount: u64,
+    epoch: u64,
+) -> MarginfiResult<u64> {
+    if mint_ai.owner.eq(&Token::id()) {
+        return Ok(input_amount);
+    }
+
+    let mint_data = mint_ai.try_borrow_data()?;
+    let mint = StateWithExtensions::<spl_token_2022::state::Mint>::unpack(&mint_data)?;
+
+    let fee = if let Ok(transfer_fee_config) = mint.get_extension::<TransferFeeConfig>() {
+        transfer_fee_config
+            .calculate_epoch_fee(epoch, input_amount)
+            .unwrap()
+    } else {
+        0
+    };
+
+    let out_amount = input_amount
+        .checked_sub(fee)
+        .ok_or(MarginfiError::MathError)?;
+
+    Ok(out_amount)
+}

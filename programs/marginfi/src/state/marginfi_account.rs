@@ -19,6 +19,7 @@ use std::cmp::max;
 use type_layout::TypeLayout;
 
 pub const ACCOUNT_IN_FLASHLOAN: u64 = 1 << 1;
+pub const ACCOUNT_DISABLED: u64 = 1 << 0;
 
 fn get_remaining_accounts_per_balance(balance: &Balance) -> MarginfiResult<usize> {
     get_remaining_accounts_per_balance_with_tag(balance.bank_asset_tag)
@@ -566,5 +567,27 @@ impl<'info> RiskEngine<'_, 'info> {
         }
 
         Ok((total_assets, total_liabilities))
+    }
+}
+
+pub struct BankAccountWrapper<'a> {
+    pub balance: &'a mut Balance,
+    pub bank: &'a mut Bank,
+}
+
+impl<'a> BankAccountWrapper<'a> {
+    // Find existing user lending account balance by bank address.
+    pub fn find(
+        bank_pk: &Pubkey,
+        bank: &'a mut Bank,
+        lending_account: &'a mut LendingAccount,
+    ) -> MarginfiResult<BankAccountWrapper<'a>> {
+        let balance = lending_account
+            .balances
+            .iter_mut()
+            .find(|balance| balance.is_active() && balance.bank_pk.eq(bank_pk))
+            .ok_or_else(|| error!(MarginfiError::BankAccountNotFound))?;
+
+        Ok(Self { balance, bank })
     }
 }

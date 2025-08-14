@@ -6,6 +6,8 @@ pub enum MarginfiError {
     InternalLogicError,
     #[msg("Invalid bank index")] // 6001
     BankNotFound,
+    #[msg("Lending account balance not found")] // 6002
+    LendingAccountBalanceNotFound,
     #[msg("Bank deposit capacity exceeded")] // 6003
     BankAssetCapacityExceeded,
     #[msg("Invalid transfer")] // 6004
@@ -14,12 +16,16 @@ pub enum MarginfiError {
     InvalidBankAccount,
     #[msg("Account is not bankrupt")] // 6013
     AccountNotBankrupt,
+    #[msg("Account balance is not bad debt")] // 6014
+    BalanceNotBadDebt,
     #[msg("Invalid group config")] // 6015
     InvalidConfig,
     #[msg("Bank paused")] // 6016
     BankPaused,
     #[msg("Bank is ReduceOnly mode")] // 6017
     BankReduceOnly,
+    #[msg("Bank is missing")] // 6018
+    BankAccountNotFound,
     #[msg("Invalid oracle setup")] // 6025
     InvalidOracleSetup,
     #[msg("Invalid bank utilization ratio")] // 6026
