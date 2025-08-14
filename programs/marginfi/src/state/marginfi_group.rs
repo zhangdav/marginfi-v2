@@ -916,6 +916,22 @@ impl Bank {
         }
     }
 
+    pub fn increment_lending_position_count(&mut self) {
+        self.lending_position_count = self.lending_position_count.saturating_add(1);
+    }
+
+    pub fn decrement_lending_position_count(&mut self) {
+        self.lending_position_count = self.lending_position_count.saturating_sub(1);
+    }
+
+    pub fn increment_borrowing_position_count(&mut self) {
+        self.borrowing_position_count = self.borrowing_position_count.saturating_add(1);
+    }
+
+    pub fn decrement_borrowing_position_count(&mut self) {
+        self.borrowing_position_count = self.borrowing_position_count.saturating_sub(1);
+    }
+
     pub fn get_flag(&self, flag: u64) -> bool {
         (self.flags & flag) == flag
     }

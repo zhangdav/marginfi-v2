@@ -1,7 +1,8 @@
 use super::price::OraclePriceFeedAdapter;
 use crate::constants::{
     ASSET_TAG_DEFAULT, ASSET_TAG_SOL, ASSET_TAG_STAKED, BANKRUPT_THRESHOLD,
-    EMPTY_BALANCE_THRESHOLD, EXP_10_I80F48, ZERO_AMOUNT_THRESHOLD,
+    EMISSIONS_FLAG_BORROW_ACTIVE, EMISSIONS_FLAG_LENDING_ACTIVE, EMPTY_BALANCE_THRESHOLD,
+    EXP_10_I80F48, MIN_EMISSIONS_START_TIME, SECONDS_PER_YEAR, ZERO_AMOUNT_THRESHOLD,
 };
 use crate::errors::MarginfiError;
 use crate::prelude::MarginfiResult;
@@ -10,12 +11,13 @@ use crate::state::health_cache::HealthCache;
 use crate::state::marginfi_group::{Bank, RiskTier, WrappedI80F48};
 use crate::state::price::PriceAdapter;
 use crate::state::price::{OraclePriceType, PriceBias};
+use crate::utils::NumTraitsWithTolerance;
 use crate::{assert_struct_align, assert_struct_size};
 use crate::{check, check_eq, debug, math_error};
 use anchor_lang::prelude::*;
 use bytemuck::{Pod, Zeroable};
 use fixed::types::I80F48;
-use std::cmp::max;
+use std::cmp::{max, min};
 use type_layout::TypeLayout;
 
 pub const ACCOUNT_IN_FLASHLOAN: u64 = 1 << 1;
@@ -31,6 +33,22 @@ fn get_remaining_accounts_per_balance_with_tag(asset_tag: u8) -> MarginfiResult<
         ASSET_TAG_STAKED => Ok(4),
         _ => err!(MarginfiError::AssetTagMismatch),
     }
+}
+
+#[derive(Debug)]
+pub enum BalanceIncreaseType {
+    Any,
+    RepayOnly,
+    DepositOnly,
+    BypassDepositLimit,
+}
+
+#[derive(Debug)]
+pub enum BalanceDecreaseType {
+    Any,
+    WithdrawOnly,
+    BorrowOnly,
+    BypassBorrowLimit,
 }
 
 pub enum RiskRequirementType {
@@ -304,6 +322,11 @@ impl MarginfiAccount {
     pub fn get_flag(&self, flag: u64) -> bool {
         self.account_flags & flag != 0
     }
+
+    pub fn set_flag(&mut self, flag: u64) {
+        msg!("Setting account flag {:b}", flag);
+        self.account_flags |= flag;
+    }
 }
 
 pub const MAX_LENDING_ACCOUNT_BALANCES: usize = 16;
@@ -334,7 +357,7 @@ pub struct Balance {
     pub _pad0: [u8; 6],
     pub asset_shares: WrappedI80F48,
     pub liability_shares: WrappedI80F48,
-    pub emission_shares: WrappedI80F48,
+    pub emissions_outstanding: WrappedI80F48,
     pub last_update: u64,
     pub _padding: [u64; 1],
 }
@@ -359,6 +382,24 @@ impl Balance {
         } else {
             None
         }
+    }
+
+    pub fn change_liability_shares(&mut self, delta: I80F48) -> MarginfiResult {
+        let liability_shares: I80F48 = self.liability_shares.into();
+        self.liability_shares = liability_shares
+            .checked_add(delta)
+            .ok_or_else(math_error!())?
+            .into();
+        Ok(())
+    }
+
+    pub fn change_asset_shares(&mut self, delta: I80F48) -> MarginfiResult {
+        let asset_shares: I80F48 = self.asset_shares.into();
+        self.asset_shares = asset_shares
+            .checked_add(delta)
+            .ok_or_else(math_error!())?
+            .into();
+        Ok(())
     }
 
     #[inline]
@@ -590,4 +631,187 @@ impl<'a> BankAccountWrapper<'a> {
 
         Ok(Self { balance, bank })
     }
+
+    /// Repay a liability, will error if there is not enough liability - depositing is not allowed.
+    pub fn repay(&mut self, amount: I80F48) -> MarginfiResult {
+        self.increase_balance_internal(amount, BalanceIncreaseType::RepayOnly)
+    }
+
+    fn increase_balance_internal(
+        &mut self,
+        balance_delta: I80F48,
+        operation_type: BalanceIncreaseType,
+    ) -> MarginfiResult {
+        debug!(
+            "Balance increase: {} {type: {:?}",
+            balance_delta, operation_type
+        );
+
+        self.claim_emissions(Clock::get()?.unix_timestamp as u64)?;
+
+        let balance = &mut self.balance;
+        let bank = &mut self.bank;
+        // Record if the balance was an asset/liability beforehand
+        let had_assets =
+            I80F48::from(balance.asset_shares).is_positive_with_tolerance(ZERO_AMOUNT_THRESHOLD);
+        let had_liabs = I80F48::from(balance.liability_shares)
+            .is_positive_with_tolerance(ZERO_AMOUNT_THRESHOLD);
+
+        let current_liability_shares: I80F48 = balance.liability_shares.into();
+        let current_liability_amount = bank.get_liability_amount(current_liability_shares)?;
+
+        let (liability_amount_decrease, asset_amount_increase) = (
+            min(current_liability_amount, balance_delta),
+            max(
+                balance_delta
+                    .checked_sub(current_liability_amount)
+                    .ok_or_else(math_error!())?,
+                I80F48::ZERO,
+            ),
+        );
+
+        match operation_type {
+            BalanceIncreaseType::RepayOnly => {
+                check!(
+                    asset_amount_increase.is_zero_with_tolerance(ZERO_AMOUNT_THRESHOLD),
+                    MarginfiError::OperationRepayOnly
+                );
+            }
+            BalanceIncreaseType::DepositOnly => {
+                check!(
+                    liability_amount_decrease.is_zero_with_tolerance(ZERO_AMOUNT_THRESHOLD),
+                    MarginfiError::OperationDepositOnly
+                );
+            }
+            BalanceIncreaseType::Any | BalanceIncreaseType::BypassDepositLimit => {}
+        }
+
+        {
+            let is_asset_amount_increasing =
+                asset_amount_increase.is_positive_with_tolerance(ZERO_AMOUNT_THRESHOLD);
+            bank.assert_operational_mode(Some(is_asset_amount_increasing))?;
+        }
+
+        let asset_shares_increase = bank.get_asset_shares(asset_amount_increase)?;
+        balance.change_asset_shares(asset_shares_increase)?;
+        bank.change_asset_shares(
+            asset_shares_increase,
+            matches!(operation_type, BalanceIncreaseType::BypassDepositLimit),
+        )?;
+
+        let liability_shares_decrease = bank.get_liability_shares(liability_amount_decrease)?;
+        balance.change_liability_shares(-liability_shares_decrease)?;
+        bank.change_liability_shares(-liability_shares_decrease, true)?;
+
+        let has_assets =
+            I80F48::from(balance.asset_shares).is_positive_with_tolerance(ZERO_AMOUNT_THRESHOLD);
+        let has_liabs = I80F48::from(balance.liability_shares)
+            .is_positive_with_tolerance(ZERO_AMOUNT_THRESHOLD);
+
+        if !had_assets && has_assets {
+            bank.increment_lending_position_count();
+        }
+
+        if had_assets && !has_assets {
+            bank.decrement_lending_position_count();
+        }
+
+        if !had_liabs && has_liabs {
+            bank.increment_borrowing_position_count();
+        }
+
+        if had_liabs && !has_liabs {
+            bank.decrement_borrowing_position_count();
+        }
+
+        Ok(())
+    }
+
+    /// Claim any unclaimed emissions and add them to the outstanding emissions amount.
+    pub fn claim_emissions(&mut self, current_timestamp: u64) -> MarginfiResult {
+        if let Some(balance_amount) = match (
+            self.balance.get_side(),
+            self.bank.get_flag(EMISSIONS_FLAG_LENDING_ACTIVE),
+            self.bank.get_flag(EMISSIONS_FLAG_BORROW_ACTIVE),
+        ) {
+            (Some(BalanceSide::Assets), true, _) => Some(
+                self.bank
+                    .get_asset_amount(self.balance.asset_shares.into())?,
+            ),
+            _ => None,
+        } {
+            let last_update = if self.balance.last_update < MIN_EMISSIONS_START_TIME {
+                current_timestamp
+            } else {
+                self.balance.last_update
+            };
+            let period = I80F48::from_num(
+                current_timestamp
+                    .checked_sub(last_update)
+                    .ok_or_else(math_error!())?,
+            );
+            let emissions_rate = I80F48::from_num(self.bank.emissions_rate);
+            let emissions = calc_emissions(
+                period,
+                balance_amount,
+                self.bank.mint_decimals as usize,
+                emissions_rate,
+            )?;
+
+            let emissions_real = min(emissions, I80F48::from(self.bank.emissions_remaining));
+
+            if emissions != emissions_real {
+                msg!(
+                    "Emissions capped: {} ({} calculated) for period {}s",
+                    emissions_real,
+                    emissions,
+                    period
+                );
+            }
+
+            debug!(
+                "Outstanding emissions: {}",
+                I80F48::from(self.balance.emissions_outstanding)
+            );
+
+            self.balance.emissions_outstanding = {
+                I80F48::from(self.balance.emissions_outstanding)
+                    .checked_add(emissions_real)
+                    .ok_or_else(math_error!())?
+            }
+            .into();
+            self.bank.emissions_remaining = {
+                I80F48::from(self.bank.emissions_remaining)
+                    .checked_sub(emissions_real)
+                    .ok_or_else(math_error!())?
+            }
+            .into();
+        }
+
+        self.balance.last_update = current_timestamp;
+
+        Ok(())
+    }
+}
+
+fn calc_emissions(
+    period: I80F48,
+    balance_amount: I80F48,
+    mint_decimals: usize,
+    emissions_rate: I80F48,
+) -> MarginfiResult<I80F48> {
+    let exponent = EXP_10_I80F48[mint_decimals];
+    let balance_amount_ui = balance_amount
+        .checked_div(exponent)
+        .ok_or_else(math_error!())?;
+
+    let emissions = period
+        .checked_mul(balance_amount_ui)
+        .ok_or_else(math_error!())?
+        .checked_div(SECONDS_PER_YEAR)
+        .ok_or_else(math_error!())?
+        .checked_mul(emissions_rate)
+        .ok_or_else(math_error!())?;
+
+    Ok(emissions)
 }

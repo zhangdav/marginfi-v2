@@ -26,6 +26,10 @@ pub enum MarginfiError {
     BankReduceOnly,
     #[msg("Bank is missing")] // 6018
     BankAccountNotFound,
+    #[msg("Operation is deposit-only")] // 6019
+    OperationDepositOnly,
+    #[msg("Operation is repay-only")] // 6022
+    OperationRepayOnly,
     #[msg("Invalid oracle setup")] // 6025
     InvalidOracleSetup,
     #[msg("Invalid bank utilization ratio")] // 6026
