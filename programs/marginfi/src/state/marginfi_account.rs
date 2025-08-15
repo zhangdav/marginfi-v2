@@ -319,6 +319,15 @@ pub struct MarginfiAccount {
 }
 
 impl MarginfiAccount {
+    /// Set the initial data for the marginfi account.
+    pub fn initialize(&mut self, group: Pubkey, authority: Pubkey) {
+        self.authority = authority;
+        self.group = group;
+        self.emissions_destination_account = Pubkey::default();
+        self.migrated_from = Pubkey::default();
+        self.migrated_to = Pubkey::default();
+    }
+
     pub fn get_flag(&self, flag: u64) -> bool {
         self.account_flags & flag != 0
     }

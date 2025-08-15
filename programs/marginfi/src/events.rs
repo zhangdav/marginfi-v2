@@ -97,3 +97,10 @@ pub struct LendingPoolBankHandleBankruptcyEvent {
     pub covered_amount: f64,
     pub socialized_amount: f64,
 }
+
+// marginfi account events
+
+#[event]
+pub struct MarginfiAccountCreateEvent {
+    pub header: AccountEventHeader,
+}

@@ -256,4 +256,9 @@ pub mod marginfi {
     ) -> MarginfiResult {
         marginfi_group::lending_pool_handle_bankruptcy(ctx)
     }
+
+    /// Initialize a marginfi account for a given group.
+    pub fn marginfi_account_initialize(ctx: Context<MarginfiAccountInitialize>) -> MarginfiResult {
+        marginfi_account::initialize_account(ctx)
+    }
 }
