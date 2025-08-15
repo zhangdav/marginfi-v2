@@ -269,4 +269,11 @@ pub mod marginfi {
     ) -> MarginfiResult {
         marginfi_account::lending_account_deposit(ctx, amount, deposit_up_to_limit)
     }
+
+    pub fn lending_account_borrow<'info>(
+        ctx: Context<'_, '_, 'info, 'info, LendingAccountBorrow<'info>>,
+        amount: u64,
+    ) -> MarginfiResult {
+        marginfi_account::lending_account_borrow(ctx, amount)
+    }
 }

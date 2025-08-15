@@ -14,6 +14,8 @@ pub enum MarginfiError {
     InvalidTransfer,
     #[msg("Invalid bank account")] // 6008
     InvalidBankAccount,
+    #[msg("RiskEngine rejected due to either bad health or stale oracles")] // 6009
+    RiskEngineInitRejected,
     #[msg("Lending account balance slots are full")] // 6010
     LendingAccountBalanceSlotsFull,
     #[msg("Account is not bankrupt")] // 6013
@@ -30,6 +32,10 @@ pub enum MarginfiError {
     BankAccountNotFound,
     #[msg("Operation is deposit-only")] // 6019
     OperationDepositOnly,
+    #[msg("Operation is withdraw-only")] // 6020
+    OperationWithdrawOnly,
+    #[msg("Operation is borrow-only")] // 6021
+    OperationBorrowOnly,
     #[msg("Operation is repay-only")] // 6022
     OperationRepayOnly,
     #[msg("Invalid oracle setup")] // 6025
@@ -38,6 +44,8 @@ pub enum MarginfiError {
     IllegalUtilizationRatio,
     #[msg("Bank borrow cap exceeded")] // 6027
     BankLiabilityCapacityExceeded,
+    #[msg("Account can have only one liability when account is under isolated risk")] // 6029
+    IsolatedAccountIllegalState,
     #[msg("Emissions already setup")] // 6030
     EmissionsAlreadySetup,
     #[msg("Oracle is not set")] // 6031

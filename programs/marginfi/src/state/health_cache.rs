@@ -6,6 +6,7 @@ use anchor_lang::prelude::*;
 use bytemuck::{Pod, Zeroable};
 use type_layout::TypeLayout;
 
+pub const HEALTHY: u32 = 1;
 pub const ENGINE_OK: u32 = 2;
 
 assert_struct_size!(HealthCache, 304);
@@ -99,6 +100,14 @@ impl HealthCache {
             self.flags |= ENGINE_OK;
         } else {
             self.flags &= !ENGINE_OK;
+        }
+    }
+
+    pub fn set_healthy(&mut self, healthy: bool) {
+        if healthy {
+            self.flags |= HEALTHY;
+        } else {
+            self.flags &= !HEALTHY;
         }
     }
 }

@@ -567,6 +567,33 @@ impl<'info> RiskEngine<'_, 'info> {
         Ok(())
     }
 
+    pub fn check_account_risk_tiers(&self) -> MarginfiResult {
+        let mut isolated_risk_count = 0;
+        let mut total_liability_balances = 0;
+
+        for account in self.bank_accounts_with_price.iter() {
+            if account.balance.is_empty(BalanceSide::Liabilities) {
+                continue;
+            }
+            total_liability_balances += 1;
+
+            let bank = account.bank.load()?;
+            if bank.config.risk_tier == RiskTier::Isolated {
+                isolated_risk_count += 1;
+                if isolated_risk_count > 1 {
+                    break;
+                }
+            }
+        }
+
+        check!(
+            isolated_risk_count == 0 || total_liability_balances == 1,
+            MarginfiError::IsolatedAccountIllegalState
+        );
+
+        Ok(())
+    }
+
     /// Returns the total assets and liabilities of the account in the form of (assets, liabilities)
     pub fn get_account_health_components(
         &self,
@@ -629,6 +656,61 @@ impl<'info> RiskEngine<'_, 'info> {
         }
 
         Ok((total_assets, total_liabilities))
+    }
+
+    pub fn check_account_init_health<'a>(
+        marginfi_account: &'a MarginfiAccount,
+        remaining_ais: &'info [AccountInfo<'info>],
+        health_cache: &mut Option<&mut HealthCache>,
+    ) -> (MarginfiResult, Option<RiskEngine<'a, 'info>>) {
+        if marginfi_account.get_flag(ACCOUNT_IN_FLASHLOAN) {
+            // Note: All risk, including the health cache, is not applicable during flashloans
+            return (Ok(()), None);
+        }
+
+        let risk_engine = match Self::new_no_flashloan_check(marginfi_account, remaining_ais) {
+            Ok(engine) => engine,
+            Err(e) => return (Err(e), None),
+        };
+        let requirement_type = RiskRequirementType::Initial;
+        let risk_engine_result = risk_engine.check_account_health(requirement_type, health_cache);
+
+        (risk_engine_result, Some(risk_engine))
+    }
+
+    /// Errors if risk account's liabilities exceed their assets.
+    fn check_account_health(
+        &self,
+        requirement_type: RiskRequirementType,
+        health_cache: &mut Option<&mut HealthCache>,
+    ) -> MarginfiResult {
+        let (total_weighted_assets, total_weighted_liabilities) =
+            self.get_account_health_components(requirement_type, health_cache)?;
+
+        let healthy = total_weighted_assets >= total_weighted_liabilities;
+
+        if healthy {
+            debug!(
+                "check_health: assets {} - liabs: {}",
+                total_weighted_assets, total_weighted_liabilities
+            );
+        } else {
+            let assets_f64: f64 = total_weighted_assets.to_num();
+            let liabs_f64: f64 = total_weighted_liabilities.to_num();
+            msg!("check_health: assets {} - liabs: {}", assets_f64, liabs_f64);
+        }
+
+        if let Some(cache) = health_cache {
+            cache.set_healthy(healthy);
+        }
+
+        if !healthy {
+            return err!(MarginfiError::RiskEngineInitRejected);
+        }
+
+        self.check_account_risk_tiers()?;
+
+        Ok(())
     }
 }
 
@@ -702,6 +784,11 @@ impl<'a> BankAccountWrapper<'a> {
     /// Deposit an asset, will repay any outstanding liabilities.
     pub fn deposit(&mut self, amount: I80F48) -> MarginfiResult {
         self.increase_balance_internal(amount, BalanceIncreaseType::Any)
+    }
+
+    /// Withdraw an asset, will error if there is not enough asset - borrowing is not allowed.
+    pub fn borrow(&mut self, amount: I80F48) -> MarginfiResult {
+        self.decrease_balance_internal(amount, BalanceDecreaseType::WithdrawOnly)
     }
 
     /// Repay a liability, will error if there is not enough liability - depositing is not allowed.
@@ -799,6 +886,97 @@ impl<'a> BankAccountWrapper<'a> {
         Ok(())
     }
 
+    fn decrease_balance_internal(
+        &mut self,
+        balance_delta: I80F48,
+        operation_type: BalanceDecreaseType,
+    ) -> MarginfiResult {
+        debug!(
+            "Balance decrease: {} of (type: {:?})",
+            balance_delta, operation_type
+        );
+
+        self.claim_emissions(Clock::get()?.unix_timestamp as u64)?;
+
+        let balance = &mut self.balance;
+        let bank = &mut self.bank;
+        let has_assets =
+            I80F48::from(balance.asset_shares).is_positive_with_tolerance(ZERO_AMOUNT_THRESHOLD);
+        let has_liabs = I80F48::from(balance.liability_shares)
+            .is_positive_with_tolerance(ZERO_AMOUNT_THRESHOLD);
+
+        let current_asset_shares: I80F48 = balance.asset_shares.into();
+        let current_asset_amount = bank.get_asset_amount(current_asset_shares)?;
+
+        let (asset_amount_decrease, liability_amount_increase) = (
+            min(current_asset_amount, balance_delta),
+            max(
+                balance_delta
+                    .checked_sub(current_asset_amount)
+                    .ok_or_else(math_error!())?,
+                I80F48::ZERO,
+            ),
+        );
+
+        match operation_type {
+            BalanceDecreaseType::WithdrawOnly => {
+                check!(
+                    liability_amount_increase.is_zero_with_tolerance(ZERO_AMOUNT_THRESHOLD),
+                    MarginfiError::OperationWithdrawOnly
+                );
+            }
+            BalanceDecreaseType::BorrowOnly => {
+                check!(
+                    asset_amount_decrease.is_zero_with_tolerance(ZERO_AMOUNT_THRESHOLD),
+                    MarginfiError::OperationBorrowOnly
+                );
+            }
+            _ => {}
+        }
+
+        {
+            let is_liability_amount_increasing =
+                liability_amount_increase.is_positive_with_tolerance(ZERO_AMOUNT_THRESHOLD);
+            bank.assert_operational_mode(Some(is_liability_amount_increasing))?;
+        }
+
+        let asset_shares_decrease = bank.get_asset_shares(asset_amount_decrease)?;
+        balance.change_asset_shares(-asset_shares_decrease)?;
+        bank.change_asset_shares(-asset_shares_decrease, false)?;
+
+        let liability_shares_increase = bank.get_liability_shares(liability_amount_increase)?;
+        balance.change_liability_shares(liability_shares_increase)?;
+        bank.change_liability_shares(
+            liability_shares_increase,
+            matches!(operation_type, BalanceDecreaseType::BypassBorrowLimit),
+        )?;
+
+        let has_assets =
+            I80F48::from(balance.asset_shares).is_positive_with_tolerance(ZERO_AMOUNT_THRESHOLD);
+        let has_liabs = I80F48::from(balance.liability_shares)
+            .is_positive_with_tolerance(ZERO_AMOUNT_THRESHOLD);
+
+        if !has_assets && has_liabs {
+            bank.increment_borrowing_position_count();
+        }
+
+        if has_assets && !has_liabs {
+            bank.decrement_borrowing_position_count();
+        }
+
+        if !has_liabs && has_assets {
+            bank.increment_borrowing_position_count();
+        }
+
+        if has_liabs && !has_assets {
+            bank.decrement_borrowing_position_count();
+        }
+
+        bank.check_utilization_ratio()?;
+
+        Ok(())
+    }
+
     /// Claim any unclaimed emissions and add them to the outstanding emissions amount.
     pub fn claim_emissions(&mut self, current_timestamp: u64) -> MarginfiResult {
         if let Some(balance_amount) = match (
@@ -883,6 +1061,29 @@ impl<'a> BankAccountWrapper<'a> {
             authority,
             maybe_mint,
             program,
+            remaining_accounts,
+        )
+    }
+
+    pub fn withdraw_spl_transfer<'info>(
+        &self,
+        amount: u64,
+        from: AccountInfo<'info>,
+        to: AccountInfo<'info>,
+        authority: AccountInfo<'info>,
+        maybe_mint: Option<&InterfaceAccount<'info, Mint>>,
+        program: AccountInfo<'info>,
+        signer_seeds: &[&[&[u8]]],
+        remaining_accounts: &[AccountInfo<'info>],
+    ) -> MarginfiResult {
+        self.bank.withdraw_spl_transfer(
+            amount,
+            from,
+            to,
+            authority,
+            maybe_mint,
+            program,
+            signer_seeds,
             remaining_accounts,
         )
     }
