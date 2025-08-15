@@ -14,6 +14,8 @@ pub enum MarginfiError {
     InvalidTransfer,
     #[msg("Invalid bank account")] // 6008
     InvalidBankAccount,
+    #[msg("Lending account balance slots are full")] // 6010
+    LendingAccountBalanceSlotsFull,
     #[msg("Account is not bankrupt")] // 6013
     AccountNotBankrupt,
     #[msg("Account balance is not bad debt")] // 6014
@@ -42,6 +44,8 @@ pub enum MarginfiError {
     OracleNotSetup,
     #[msg("Update emissions error")] //6034
     EmissionsUpdateError,
+    #[msg("Account disabled")] // 6035
+    AccountDisabled,
     #[msg("Illegal action during flashloan")] // 6037
     AccountInFlashloan,
     #[msg("Unauthorized")] // 6042

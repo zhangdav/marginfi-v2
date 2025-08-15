@@ -1,6 +1,7 @@
+use crate::constants::{ASSET_TAG_DEFAULT, ASSET_TAG_STAKED};
 use crate::errors::MarginfiError;
-use crate::state::marginfi_group::Bank;
-use crate::state::marginfi_group::WrappedI80F48;
+use crate::state::marginfi_account::MarginfiAccount;
+use crate::state::marginfi_group::{Bank, WrappedI80F48};
 use crate::MarginfiResult;
 use anchor_lang::prelude::*;
 use anchor_spl::{
@@ -147,4 +148,34 @@ pub fn calculate_post_fee_spl_deposit_amount(
         .ok_or(MarginfiError::MathError)?;
 
     Ok(out_amount)
+}
+
+/// Validate that after a deposit to Bank, the users's account contains either all Default/SOL
+/// balances, or all Staked/Sol balances. Default and Staked assets cannot mix.
+pub fn validate_asset_tags(bank: &Bank, marginfi_account: &MarginfiAccount) -> MarginfiResult {
+    let mut has_default_asset = false;
+    let mut has_staked_asset = false;
+
+    for balance in marginfi_account.lending_account.balances.iter() {
+        if balance.is_active() {
+            match balance.bank_asset_tag {
+                ASSET_TAG_DEFAULT => has_default_asset = true,
+                ASSET_TAG_SOL => { /* Do nothing, SOL can mix with any asset type */ }
+                ASSET_TAG_STAKED => has_staked_asset = true,
+                _ => panic!("unsupported asset tag"),
+            }
+        }
+    }
+
+    // 1. Regular assets (DEFAULT) cannot mix with Staked assets
+    if bank.config.asset_tag == ASSET_TAG_DEFAULT && has_staked_asset {
+        return err!(MarginfiError::AssetTagMismatch);
+    }
+
+    // 2. Staked SOL cannot mix with Regular asset (DEFAULT)
+    if bank.config.asset_tag == ASSET_TAG_STAKED && has_default_asset {
+        return err!(MarginfiError::AssetTagMismatch);
+    }
+
+    Ok(())
 }

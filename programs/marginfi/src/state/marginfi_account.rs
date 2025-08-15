@@ -15,6 +15,7 @@ use crate::utils::NumTraitsWithTolerance;
 use crate::{assert_struct_align, assert_struct_size};
 use crate::{check, check_eq, debug, math_error};
 use anchor_lang::prelude::*;
+use anchor_spl::token_interface::Mint;
 use bytemuck::{Pod, Zeroable};
 use fixed::types::I80F48;
 use std::cmp::{max, min};
@@ -351,7 +352,18 @@ pub struct LendingAccount {
     pub _padding: [u64; 8],
 }
 
-/// TODO: LendingAccount impl
+impl LendingAccount {
+    pub fn get_first_empty_balance(&self) -> Option<usize> {
+        self.balances
+            .iter()
+            .position(|balance| !balance.is_active())
+    }
+
+    pub fn sort_balances(&mut self) {
+        // Sort all balances in descending order by bank_pk
+        self.balances.sort_by(|a, b| b.bank_pk.cmp(&a.bank_pk));
+    }
+}
 
 assert_struct_size!(Balance, 104);
 assert_struct_align!(Balance, 8);
@@ -641,6 +653,57 @@ impl<'a> BankAccountWrapper<'a> {
         Ok(Self { balance, bank })
     }
 
+    // Find existing user lending account balance by bank address.
+    // Create it if not found.
+    pub fn find_or_create(
+        bank_pk: &Pubkey,
+        bank: &'a mut Bank,
+        lending_account: &'a mut LendingAccount,
+    ) -> MarginfiResult<BankAccountWrapper<'a>> {
+        let balance_index = lending_account
+            .balances
+            .iter()
+            .position(|balance| balance.is_active() && balance.bank_pk.eq(bank_pk));
+
+        match balance_index {
+            Some(balance_index) => {
+                let balance = lending_account
+                    .balances
+                    .get_mut(balance_index)
+                    .ok_or_else(|| error!(MarginfiError::BankAccountNotFound))?;
+
+                Ok(Self { balance, bank })
+            }
+            None => {
+                let empty_index = lending_account
+                    .get_first_empty_balance()
+                    .ok_or_else(|| error!(MarginfiError::LendingAccountBalanceSlotsFull))?;
+
+                lending_account.balances[empty_index] = Balance {
+                    active: 1,
+                    bank_pk: *bank_pk,
+                    bank_asset_tag: bank.config.asset_tag,
+                    _pad0: [0; 6],
+                    asset_shares: I80F48::ZERO.into(),
+                    liability_shares: I80F48::ZERO.into(),
+                    emissions_outstanding: I80F48::ZERO.into(),
+                    last_update: Clock::get()?.unix_timestamp as u64,
+                    _padding: [0; 1],
+                };
+
+                Ok(Self {
+                    balance: lending_account.balances.get_mut(empty_index).unwrap(),
+                    bank,
+                })
+            }
+        }
+    }
+
+    /// Deposit an asset, will repay any outstanding liabilities.
+    pub fn deposit(&mut self, amount: I80F48) -> MarginfiResult {
+        self.increase_balance_internal(amount, BalanceIncreaseType::Any)
+    }
+
     /// Repay a liability, will error if there is not enough liability - depositing is not allowed.
     pub fn repay(&mut self, amount: I80F48) -> MarginfiResult {
         self.increase_balance_internal(amount, BalanceIncreaseType::RepayOnly)
@@ -800,6 +863,28 @@ impl<'a> BankAccountWrapper<'a> {
         self.balance.last_update = current_timestamp;
 
         Ok(())
+    }
+
+    // SPL helpers
+    pub fn deposit_spl_transfer<'info>(
+        &self,
+        amount: u64,
+        from: AccountInfo<'info>,
+        to: AccountInfo<'info>,
+        authority: AccountInfo<'info>,
+        maybe_mint: Option<&InterfaceAccount<'info, Mint>>,
+        program: AccountInfo<'info>,
+        remaining_accounts: &[AccountInfo<'info>],
+    ) -> MarginfiResult {
+        self.bank.deposit_spl_transfer(
+            amount,
+            from,
+            to,
+            authority,
+            maybe_mint,
+            program,
+            remaining_accounts,
+        )
     }
 }
 

@@ -104,3 +104,11 @@ pub struct LendingPoolBankHandleBankruptcyEvent {
 pub struct MarginfiAccountCreateEvent {
     pub header: AccountEventHeader,
 }
+
+#[event]
+pub struct LendingAccountDepositEvent {
+    pub header: AccountEventHeader,
+    pub bank: Pubkey,
+    pub mint: Pubkey,
+    pub amount: u64,
+}

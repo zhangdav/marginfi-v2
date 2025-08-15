@@ -261,4 +261,12 @@ pub mod marginfi {
     pub fn marginfi_account_initialize(ctx: Context<MarginfiAccountInitialize>) -> MarginfiResult {
         marginfi_account::initialize_account(ctx)
     }
+
+    pub fn lending_account_deposit<'info>(
+        ctx: Context<'_, '_, 'info, 'info, LendingAccountDeposit<'info>>,
+        amount: u64,
+        deposit_up_to_limit: Option<bool>,
+    ) -> MarginfiResult {
+        marginfi_account::lending_account_deposit(ctx, amount, deposit_up_to_limit)
+    }
 }

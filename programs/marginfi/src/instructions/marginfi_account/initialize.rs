@@ -1,9 +1,9 @@
-use anchor_lang::prelude::*;
 use crate::{
     events::{AccountEventHeader, MarginfiAccountCreateEvent},
     prelude::*,
     state::{marginfi_account::MarginfiAccount, marginfi_group::MarginfiGroup},
 };
+use anchor_lang::prelude::*;
 
 pub fn initialize_account(ctx: Context<MarginfiAccountInitialize>) -> MarginfiResult {
     let MarginfiAccountInitialize {
