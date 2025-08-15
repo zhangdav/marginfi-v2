@@ -250,4 +250,10 @@ pub mod marginfi {
     pub fn migrate_pyth_push_oracle(ctx: Context<MigratePythPushOracle>) -> MarginfiResult {
         marginfi_group::migrate_pyth_push_oracle(ctx)
     }
+
+    pub fn lending_pool_handle_bankruptcy<'info>(
+        ctx: Context<'_, '_, 'info, 'info, LendingPoolHandleBankruptcy<'info>>,
+    ) -> MarginfiResult {
+        marginfi_group::lending_pool_handle_bankruptcy(ctx)
+    }
 }
