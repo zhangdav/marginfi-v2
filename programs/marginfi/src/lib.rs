@@ -297,4 +297,12 @@ pub mod marginfi {
     ) -> MarginfiResult {
         marginfi_account::lending_account_end_flashloan(ctx)
     }
+
+    pub fn lending_account_withdraw<'info>(
+        ctx: Context<'_, '_, 'info, 'info, LendingAccountWithdraw<'info>>,
+        amount: u64,
+        withdraw_all: Option<bool>,
+    ) -> MarginfiResult {
+        marginfi_account::lending_account_withdraw(ctx, amount, withdraw_all)
+    }
 }

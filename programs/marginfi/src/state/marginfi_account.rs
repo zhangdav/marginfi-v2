@@ -816,6 +816,11 @@ impl<'a> BankAccountWrapper<'a> {
         self.increase_balance_internal(amount, BalanceIncreaseType::Any)
     }
 
+    /// Withdraw an asset, will error if there is no enough asset - borrowing is not allowed.
+    pub fn withdraw(&mut self, amount: I80F48) -> MarginfiResult {
+        self.decrease_balance_internal(amount, BalanceDecreaseType::WithdrawOnly)
+    }
+
     /// Incur a borrow, will withdraw any existing assets.
     pub fn borrow(&mut self, amount: I80F48) -> MarginfiResult {
         self.decrease_balance_internal(amount, BalanceDecreaseType::Any)
@@ -870,6 +875,56 @@ impl<'a> BankAccountWrapper<'a> {
         };
 
         Ok(spl_deposit_amount
+            .checked_to_num()
+            .ok_or_else(math_error!())?)
+    }
+
+    /// Withdraw existing asset in full - will error if there is no asset.
+    pub fn withdraw_all(&mut self) -> MarginfiResult<u64> {
+        self.claim_emissions(Clock::get()?.unix_timestamp as u64)?;
+
+        let balance = &mut self.balance;
+        let bank = &mut self.bank;
+
+        bank.assert_operational_mode(None)?;
+
+        let total_asset_shares: I80F48 = balance.asset_shares.into();
+        let current_asset_amount = bank.get_asset_amount(total_asset_shares)?;
+        let current_liability_amount =
+            bank.get_liability_amount(balance.liability_shares.into())?;
+
+        debug!("Withdrawing all: {}", current_asset_amount);
+
+        check!(
+            current_asset_amount.is_positive_with_tolerance(ZERO_AMOUNT_THRESHOLD),
+            MarginfiError::NoAssetFound
+        );
+
+        check!(
+            current_liability_amount.is_zero_with_tolerance(ZERO_AMOUNT_THRESHOLD),
+            MarginfiError::NoLiabilityFound
+        );
+
+        balance.close()?;
+        bank.decrement_lending_position_count();
+        bank.change_asset_shares(-total_asset_shares, false)?;
+
+        bank.check_utilization_ratio()?;
+
+        let spl_withdraw_amount = current_asset_amount
+            .checked_floor()
+            .ok_or_else(math_error!())?;
+
+        bank.collected_insurance_fees_outstanding = {
+            current_asset_amount
+                .checked_sub(spl_withdraw_amount)
+                .ok_or_else(math_error!())?
+                .checked_add(bank.collected_insurance_fees_outstanding.into())
+                .ok_or_else(math_error!())?
+                .into()
+        };
+
+        Ok(spl_withdraw_amount
             .checked_to_num()
             .ok_or_else(math_error!())?)
     }
