@@ -276,4 +276,12 @@ pub mod marginfi {
     ) -> MarginfiResult {
         marginfi_account::lending_account_borrow(ctx, amount)
     }
+
+    pub fn lending_account_repay<'info>(
+        ctx: Context<'_, '_, 'info, 'info, LendingAccountRepay<'info>>,
+        amount: u64,
+        repay_all: Option<bool>,
+    ) -> MarginfiResult {
+        marginfi_account::lending_account_repay(ctx, amount, repay_all)
+    }
 }

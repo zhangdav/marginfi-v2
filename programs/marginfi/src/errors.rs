@@ -38,6 +38,8 @@ pub enum MarginfiError {
     OperationBorrowOnly,
     #[msg("Operation is repay-only")] // 6022
     OperationRepayOnly,
+    #[msg("No liability found")] // 6024
+    NoLiabilityFound,
     #[msg("Invalid oracle setup")] // 6025
     InvalidOracleSetup,
     #[msg("Invalid bank utilization ratio")] // 6026
@@ -50,6 +52,8 @@ pub enum MarginfiError {
     EmissionsAlreadySetup,
     #[msg("Oracle is not set")] // 6031
     OracleNotSetup,
+    #[msg("Cannot close balance because of outstanding emissions")] // 6033
+    CannotCloseOutstandingEmissions,
     #[msg("Update emissions error")] //6034
     EmissionsUpdateError,
     #[msg("Account disabled")] // 6035
@@ -110,6 +114,8 @@ pub enum MarginfiError {
     OracleMaxConfidenceExceeded,
     #[msg("Banks cannot close when they have open positions or emissions outstanding")] // 6081
     BankCannotClose,
+    #[msg("No asset found")] // 6082
+    NoAssetFound,
 }
 
 impl From<MarginfiError> for ProgramError {

@@ -120,3 +120,12 @@ pub struct LendingAccountBorrowEvent {
     pub mint: Pubkey,
     pub amount: u64,
 }
+
+#[event]
+pub struct LendingAccountRepayEvent {
+    pub header: AccountEventHeader,
+    pub bank: Pubkey,
+    pub mint: Pubkey,
+    pub amount: u64,
+    pub close_balance: bool,
+}

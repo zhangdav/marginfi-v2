@@ -405,6 +405,17 @@ impl Balance {
         }
     }
 
+    pub fn close(&mut self) -> MarginfiResult {
+        check!(
+            I80F48::from(self.emissions_outstanding) < I80F48::ONE,
+            MarginfiError::CannotCloseOutstandingEmissions
+        );
+
+        *self = Self::empty_deactivated();
+
+        Ok(())
+    }
+
     pub fn change_liability_shares(&mut self, delta: I80F48) -> MarginfiResult {
         let liability_shares: I80F48 = self.liability_shares.into();
         self.liability_shares = liability_shares
@@ -432,6 +443,20 @@ impl Balance {
         .into();
 
         shares < EMPTY_BALANCE_THRESHOLD
+    }
+
+    pub fn empty_deactivated() -> Self {
+        Balance {
+            active: 0,
+            bank_pk: Pubkey::default(),
+            bank_asset_tag: ASSET_TAG_DEFAULT,
+            _pad0: [0; 6],
+            asset_shares: WrappedI80F48::from(I80F48::ZERO),
+            liability_shares: WrappedI80F48::from(I80F48::ZERO),
+            emissions_outstanding: WrappedI80F48::from(I80F48::ZERO),
+            last_update: 0,
+            _padding: [0; 1],
+        }
     }
 }
 
@@ -786,14 +811,62 @@ impl<'a> BankAccountWrapper<'a> {
         self.increase_balance_internal(amount, BalanceIncreaseType::Any)
     }
 
-    /// Withdraw an asset, will error if there is not enough asset - borrowing is not allowed.
+    /// Incur a borrow, will withdraw any existing assets.
     pub fn borrow(&mut self, amount: I80F48) -> MarginfiResult {
-        self.decrease_balance_internal(amount, BalanceDecreaseType::WithdrawOnly)
+        self.decrease_balance_internal(amount, BalanceDecreaseType::Any)
     }
 
     /// Repay a liability, will error if there is not enough liability - depositing is not allowed.
     pub fn repay(&mut self, amount: I80F48) -> MarginfiResult {
         self.increase_balance_internal(amount, BalanceIncreaseType::RepayOnly)
+    }
+
+    /// Repay existing liabilities in full - will error if there is no liability.
+    pub fn repay_all(&mut self) -> MarginfiResult<u64> {
+        self.claim_emissions(Clock::get()?.unix_timestamp as u64)?;
+
+        let balance = &mut self.balance;
+        let bank = &mut self.bank;
+
+        bank.assert_operational_mode(None)?;
+
+        let total_liability_shares: I80F48 = balance.liability_shares.into();
+        let current_liability_amount = bank.get_liability_amount(total_liability_shares)?;
+        let current_asset_amount = bank.get_asset_amount(balance.asset_shares.into())?;
+
+        debug!("Repaying all: {}", current_liability_amount,);
+
+        check!(
+            current_liability_amount.is_positive_with_tolerance(ZERO_AMOUNT_THRESHOLD),
+            MarginfiError::NoLiabilityFound
+        );
+
+        /// PR
+        check!(
+            current_asset_amount.is_zero_with_tolerance(ZERO_AMOUNT_THRESHOLD),
+            MarginfiError::NoAssetFound
+        );
+
+        balance.close()?;
+        bank.decrement_borrowing_position_count();
+        bank.change_liability_shares(-total_liability_shares, false)?;
+
+        let spl_deposit_amount = current_liability_amount
+            .checked_ceil()
+            .ok_or_else(math_error!())?;
+
+        bank.collected_insurance_fees_outstanding = {
+            spl_deposit_amount
+                .checked_sub(current_liability_amount)
+                .ok_or_else(math_error!())?
+                .checked_add(bank.collected_insurance_fees_outstanding.into())
+                .ok_or_else(math_error!())?
+                .into()
+        };
+
+        Ok(spl_deposit_amount
+            .checked_to_num()
+            .ok_or_else(math_error!())?)
     }
 
     fn increase_balance_internal(
@@ -900,9 +973,9 @@ impl<'a> BankAccountWrapper<'a> {
 
         let balance = &mut self.balance;
         let bank = &mut self.bank;
-        let has_assets =
+        let had_assets =
             I80F48::from(balance.asset_shares).is_positive_with_tolerance(ZERO_AMOUNT_THRESHOLD);
-        let has_liabs = I80F48::from(balance.liability_shares)
+        let had_liabs = I80F48::from(balance.liability_shares)
             .is_positive_with_tolerance(ZERO_AMOUNT_THRESHOLD);
 
         let current_asset_shares: I80F48 = balance.asset_shares.into();
@@ -956,19 +1029,16 @@ impl<'a> BankAccountWrapper<'a> {
         let has_liabs = I80F48::from(balance.liability_shares)
             .is_positive_with_tolerance(ZERO_AMOUNT_THRESHOLD);
 
-        if !has_assets && has_liabs {
+        if !had_assets && has_assets {
+            bank.increment_lending_position_count();
+        }
+        if had_assets && !has_assets {
+            bank.decrement_lending_position_count();
+        }
+        if !had_liabs && has_liabs {
             bank.increment_borrowing_position_count();
         }
-
-        if has_assets && !has_liabs {
-            bank.decrement_borrowing_position_count();
-        }
-
-        if !has_liabs && has_assets {
-            bank.increment_borrowing_position_count();
-        }
-
-        if has_liabs && !has_assets {
+        if had_liabs && !has_liabs {
             bank.decrement_borrowing_position_count();
         }
 
