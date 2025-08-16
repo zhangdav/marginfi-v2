@@ -337,6 +337,11 @@ impl MarginfiAccount {
         msg!("Setting account flag {:b}", flag);
         self.account_flags |= flag;
     }
+
+    pub fn unset_flag(&mut self, flag: u64) {
+        msg!("Unsetting account flag {:b}", flag);
+        self.account_flags &= !flag;
+    }
 }
 
 pub const MAX_LENDING_ACCOUNT_BALANCES: usize = 16;

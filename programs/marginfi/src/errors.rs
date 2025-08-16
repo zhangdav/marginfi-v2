@@ -60,6 +60,8 @@ pub enum MarginfiError {
     AccountDisabled,
     #[msg("Illegal action during flashloan")] // 6037
     AccountInFlashloan,
+    #[msg("Illegal flashloan")] // 6038
+    IllegalFlashloan,
     #[msg("Unauthorized")] // 6042
     Unauthorized,
     #[msg("Token22 Banks require mint account as first remaining account")] // 6044

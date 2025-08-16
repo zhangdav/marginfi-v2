@@ -284,4 +284,17 @@ pub mod marginfi {
     ) -> MarginfiResult {
         marginfi_account::lending_account_repay(ctx, amount, repay_all)
     }
+
+    pub fn lending_account_start_flashloan(
+        ctx: Context<LendingAccountStartFlashloan>,
+        end_index: u64,
+    ) -> MarginfiResult {
+        marginfi_account::lending_account_start_flashloan(ctx, end_index)
+    }
+
+    pub fn lending_account_end_flashloan<'info>(
+        ctx: Context<'_, '_, 'info, 'info, LendingAccountEndFlashloan<'info>>,
+    ) -> MarginfiResult {
+        marginfi_account::lending_account_end_flashloan(ctx)
+    }
 }
