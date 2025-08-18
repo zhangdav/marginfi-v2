@@ -179,3 +179,20 @@ pub fn validate_asset_tags(bank: &Bank, marginfi_account: &MarginfiAccount) -> M
 
     Ok(())
 }
+
+pub fn validate_bank_asset_tags(bank_a: &Bank, bank_b: &Bank) -> MarginfiResult {
+    let is_bank_a_default = bank_a.config.asset_tag == ASSET_TAG_DEFAULT;
+    let is_bank_a_staked = bank_a.config.asset_tag == ASSET_TAG_STAKED;
+    let is_bank_b_default = bank_b.config.asset_tag == ASSET_TAG_DEFAULT;
+    let is_bank_b_staked = bank_b.config.asset_tag == ASSET_TAG_STAKED;
+
+    if is_bank_a_default && is_bank_b_staked {
+        return err!(MarginfiError::AssetTagMismatch);
+    }
+
+    if is_bank_a_staked && is_bank_b_default {
+        return err!(MarginfiError::AssetTagMismatch);
+    }
+
+    Ok(())
+}

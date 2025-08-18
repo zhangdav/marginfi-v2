@@ -59,6 +59,9 @@ pub const ZERO_AMOUNT_THRESHOLD: I80F48 = I80F48!(0.0001);
 /// This is USD denominated, so 0.001 = $0.1
 pub const BANKRUPT_THRESHOLD: I80F48 = I80F48!(0.1);
 
+pub const LIQUIDATION_LIQUIDATOR_FEE: I80F48 = I80F48!(0.025);
+pub const LIQUIDATION_INSURANCE_FEE: I80F48 = I80F48!(0.025);
+
 /// Any balance below 1 SPL token amount is treated as none,
 /// this is to account for any artifacts resulting from binary fraction arithemtic.
 pub const EMPTY_BALANCE_THRESHOLD: I80F48 = I80F48!(1);

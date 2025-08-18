@@ -18,11 +18,25 @@ use anchor_lang::prelude::*;
 use anchor_spl::token_interface::Mint;
 use bytemuck::{Pod, Zeroable};
 use fixed::types::I80F48;
+use fixed_macro::types::I80F48;
 use std::cmp::{max, min};
+use std::collections::btree_map::ValuesMut;
 use type_layout::TypeLayout;
 
 pub const ACCOUNT_IN_FLASHLOAN: u64 = 1 << 1;
 pub const ACCOUNT_DISABLED: u64 = 1 << 0;
+
+pub fn get_remaining_accounts_per_bank(bank: &Bank) -> MarginfiResult<usize> {
+    get_remaining_accounts_per_asset_tag(bank.config.asset_tag)
+}
+
+fn get_remaining_accounts_per_asset_tag(asset_tag: u8) -> MarginfiResult<usize> {
+    match asset_tag {
+        ASSET_TAG_DEFAULT | ASSET_TAG_SOL => Ok(2),
+        ASSET_TAG_STAKED => Ok(4),
+        _ => err!(MarginfiError::AssetTagMismatch),
+    }
+}
 
 fn get_remaining_accounts_per_balance(balance: &Balance) -> MarginfiResult<usize> {
     get_remaining_accounts_per_balance_with_tag(balance.bank_asset_tag)
@@ -1239,4 +1253,17 @@ fn calc_emissions(
         .ok_or_else(math_error!())?;
 
     Ok(emissions)
+}
+
+#[inline]
+pub fn calc_amount(value: I80F48, price: I80F48, mint_decimals: u8) -> MarginfiResult<I80F48> {
+    let scaling_factor = EXP_10_I80F48[mint_decimals as usize];
+
+    let qt = value
+        .checked_mul(scaling_factor)
+        .ok_or_else(math_error!())?
+        .checked_div(price)
+        .ok_or_else(math_error!())?;
+
+    Ok(qt)
 }

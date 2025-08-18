@@ -138,3 +138,26 @@ pub struct LendingAccountWithdrawEvent {
     pub amount: u64,
     pub close_balance: bool,
 }
+
+#[event]
+pub struct LendingAccountLiquidateEvent {
+    pub header: AccountEventHeader,
+    pub liquidatee_marginfi_account: Pubkey,
+    pub liquidatee_marginfi_account_authority: Pubkey,
+    pub asset_bank: Pubkey,
+    pub asset_mint: Pubkey,
+    pub liability_bank: Pubkey,
+    pub liability_mint: Pubkey,
+    pub liquidatee_pre_health: f64,
+    pub liquidatee_post_health: f64,
+    pub pre_balances: LiquidationBalances,
+    pub post_balances: LiquidationBalances,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize)]
+pub struct LiquidationBalances {
+    pub liquidatee_asset_balance: f64,
+    pub liquidatee_liability_balance: f64,
+    pub liquidator_asset_balance: f64,
+    pub liquidator_liability_balance: f64,
+}
