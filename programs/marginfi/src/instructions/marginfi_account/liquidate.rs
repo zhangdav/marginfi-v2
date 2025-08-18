@@ -11,6 +11,7 @@ use crate::utils::{validate_asset_tags, validate_bank_asset_tags};
 use crate::{
     bank_signer,
     constants::{LIQUIDITY_VAULT_AUTHORITY_SEED, LIQUIDITY_VAULT_SEED},
+    errors::MarginfiError,
     state::marginfi_account::{BankAccountWrapper, MarginfiAccount},
 };
 use crate::{check, debug, prelude::*, utils};
@@ -19,6 +20,347 @@ use anchor_lang::solana_program::clock::Clock;
 use anchor_lang::solana_program::sysvar::Sysvar;
 use anchor_spl::token_interface::{TokenAccount, TokenInterface};
 use fixed::types::I80F48;
+
+pub fn lending_account_liquidate<'info>(
+    mut ctx: Context<'_, '_, 'info, 'info, LendingAccountLiquidate<'info>>,
+    asset_amount: u64,
+) -> MarginfiResult {
+    check!(asset_amount > 0, MarginfiError::ZeroLiquidationAmount);
+
+    {
+        let asset_bank = ctx.accounts.asset_bank.load()?;
+        let liab_bank = ctx.accounts.liab_bank.load()?;
+        validate_bank_asset_tags(&asset_bank, &liab_bank)?;
+
+        let user_acc = ctx.accounts.liquidatee_marginfi_account.load()?;
+        validate_asset_tags(&liab_bank, &user_acc)?;
+
+        let liquidator_acc = ctx.accounts.liquidator_marginfi_account.load()?;
+        validate_asset_tags(&liab_bank, &liquidator_acc)?;
+        validate_asset_tags(&asset_bank, &liquidator_acc)?;
+    }
+
+    let LendingAccountLiquidate {
+        liquidator_marginfi_account: liquidator_marginfi_account_loader,
+        liquidatee_marginfi_account: liquidatee_marginfi_account_loader,
+        group: marginfi_group_loader,
+        ..
+    } = ctx.accounts;
+
+    let mut liquidator_marginfi_account = liquidator_marginfi_account_loader.load_mut()?;
+    let mut liquidatee_marginfi_account = liquidatee_marginfi_account_loader.load_mut()?;
+    let clock = Clock::get()?;
+    let current_timestamp = clock.unix_timestamp;
+
+    let maybe_liab_bank_mint = utils::maybe_take_bank_mint(
+        &mut ctx.remaining_accounts,
+        &*ctx.accounts.liab_bank.load()?,
+        ctx.accounts.token_program.key,
+    )?;
+    let group = &*marginfi_group_loader.load()?;
+    {
+        ctx.accounts.asset_bank.load_mut()?.accrue_interest(
+            current_timestamp,
+            group,
+            #[cfg(not(feature = "client"))]
+            ctx.accounts.asset_bank.key(),
+        )?;
+        ctx.accounts.liab_bank.load_mut()?.accrue_interest(
+            current_timestamp,
+            group,
+            #[cfg(not(feature = "client"))]
+            ctx.accounts.liab_bank.key(),
+        )?;
+    }
+
+    let init_liquidatee_remaining_len = liquidatee_marginfi_account.get_remaining_accounts_len()?;
+
+    let liquidatee_accounts_starting_pos =
+        ctx.remaining_accounts.len() - init_liquidatee_remaining_len;
+    let liquidatee_remaining_accounts = &ctx.remaining_accounts[liquidatee_accounts_starting_pos..];
+
+    liquidatee_marginfi_account.lending_account.sort_balances();
+
+    let pre_liquidation_health: I80F48 =
+        RiskEngine::new(&liquidatee_marginfi_account, liquidatee_remaining_accounts)?
+            .check_pre_liquidation_condition_and_get_account_health(
+                Some(&ctx.accounts.liab_bank.key()),
+                &mut None,
+            )?;
+
+    // Accounting changes
+    let (pre_balances, post_balances) = {
+        let asset_amount: I80F48 = I80F48::from_num(asset_amount);
+
+        let mut asset_bank = ctx.accounts.asset_bank.load_mut()?;
+        let asset_bank_remaining_accounts_len = get_remaining_accounts_per_bank(&asset_bank)? - 1;
+
+        let asset_price: I80F48 = {
+            let oracle_ais = &ctx.remaining_accounts[0..asset_bank_remaining_accounts_len];
+            let asset_pf = OraclePriceFeedAdapter::try_from_bank_config(
+                &asset_bank.config,
+                oracle_ais,
+                &clock,
+            )?;
+            asset_pf.get_price_of_type(
+                OraclePriceType::RealTime,
+                Some(PriceBias::Low),
+                asset_bank.config.oracle_max_confidence,
+            )?
+        };
+        check!(asset_price > I80F48::ZERO, MarginfiError::ZeroAssetPrice);
+
+        let mut liab_bank = ctx.accounts.liab_bank.load_mut()?;
+        let liab_bank_remaining_accounts_len = get_remaining_accounts_per_bank(&liab_bank)? - 1;
+        let liab_price: I80F48 = {
+            let oracle_ais = &ctx.remaining_accounts[asset_bank_remaining_accounts_len
+                ..(asset_bank_remaining_accounts_len + liab_bank_remaining_accounts_len)];
+            let liab_pf = OraclePriceFeedAdapter::try_from_bank_config(
+                &liab_bank.config,
+                oracle_ais,
+                &clock,
+            )?;
+            liab_pf.get_price_of_type(
+                OraclePriceType::RealTime,
+                Some(PriceBias::High),
+                liab_bank.config.oracle_max_confidence,
+            )?
+        };
+        check!(liab_price > I80F48::ZERO, MarginfiError::ZeroLiabilityPrice);
+
+        let final_discount: I80F48 =
+            I80F48::ONE - (LIQUIDATION_INSURANCE_FEE + LIQUIDATION_LIQUIDATOR_FEE);
+        let liquidator_discount: I80F48 = I80F48::ONE - LIQUIDATION_LIQUIDATOR_FEE;
+
+        // Quantity of liability to be paid off by liquidator
+        let liab_amount_liquidator: I80F48 = calc_amount(
+            calc_value(
+                asset_amount,
+                asset_price,
+                asset_bank.mint_decimals,
+                Some(liquidator_discount),
+            )?,
+            liab_price,
+            liab_bank.mint_decimals,
+        )?;
+
+        //Quantity of liability to be received by liquidatee
+        let liab_amount_final: I80F48 = calc_amount(
+            calc_value(
+                asset_amount,
+                asset_price,
+                asset_bank.mint_decimals,
+                Some(final_discount),
+            )?,
+            liab_price,
+            liab_bank.mint_decimals,
+        )?;
+
+        // Insurance fund fee
+        let insurance_fund_fee: I80F48 = liab_amount_liquidator - liab_amount_final;
+
+        assert!(
+            insurance_fund_fee >= I80F48::ZERO,
+            "Insurance fund fee cannot be negative"
+        );
+
+        debug!(
+            "liab_quantity_liq: {}, liab_q_final: {}, asset_amount: {}, insurance_fund_fee: {}, liab_price: {}, asset_price: {}",
+            liab_amount_liquidator, liab_amount_final, asset_amount, insurance_fund_fee, liab_price, asset_price
+        );
+
+        // Liquidator pays off liability
+        let (liquidator_liability_pre_balance, liquidator_liability_post_balance) = {
+            let mut bank_account = BankAccountWrapper::find_or_create(
+                &ctx.accounts.liab_bank.key(),
+                &mut liab_bank,
+                &mut liquidator_marginfi_account.lending_account,
+            )?;
+
+            let pre_balance: I80F48 = bank_account
+                .bank
+                .get_liability_amount(bank_account.balance.liability_shares.into())?;
+
+            bank_account.decrease_balance_in_liquidation(liab_amount_liquidator)?;
+
+            let post_balance: I80F48 = bank_account
+                .bank
+                .get_liability_amount(bank_account.balance.liability_shares.into())?;
+
+            (pre_balance, post_balance)
+        };
+
+        // Liquidatee pays off `asset_quantity` amount of collateral
+        let (liquidatee_asset_pre_balance, liquidatee_asset_post_balance) = {
+            let mut bank_account = BankAccountWrapper::find(
+                &ctx.accounts.asset_bank.key(),
+                &mut asset_bank,
+                &mut liquidatee_marginfi_account.lending_account,
+            )?;
+
+            let pre_balance: I80F48 = bank_account
+                .bank
+                .get_asset_amount(bank_account.balance.asset_shares.into())?;
+
+            bank_account
+                .withdraw(asset_amount)
+                .map_err(|_| MarginfiError::OverliquidationAttempt)?;
+
+            let post_balance: I80F48 = bank_account
+                .bank
+                .get_asset_amount(bank_account.balance.asset_shares.into())?;
+
+            (pre_balance, asset_price)
+        };
+
+        // Liquidator receives `asset_quantity` amount of collateral
+        let (liquidator_asset_pre_balance, liquidator_asset_post_balance) = {
+            let mut bank_account = BankAccountWrapper::find_or_create(
+                &ctx.accounts.asset_bank.key(),
+                &mut asset_bank,
+                &mut liquidator_marginfi_account.lending_account,
+            )?;
+
+            let pre_balance: I80F48 = bank_account
+                .bank
+                .get_asset_amount(bank_account.balance.asset_shares.into())?;
+
+            bank_account.increase_balance_in_liquidation(asset_amount)?;
+
+            let post_balance: I80F48 = bank_account
+                .bank
+                .get_asset_amount(bank_account.balance.asset_shares.into())?;
+
+            (pre_balance, post_balance)
+        };
+
+        let (insurance_fee_to_transfer, insurance_fee_dust) = (
+            insurance_fund_fee
+                .checked_to_num::<u64>()
+                .ok_or(MarginfiError::MathError)?,
+            insurance_fund_fee.frac(),
+        );
+
+        let (liquidatee_liability_pre_balance, liquidatee_liability_post_balance) = {
+            // Liquidatee receives liability payment
+            let liab_bank_liquidity_authority_bump = liab_bank.liquidity_vault_authority_bump;
+
+            let mut liquidatee_liab_bank_account = BankAccountWrapper::find(
+                &ctx.accounts.liab_bank.key(),
+                &mut liab_bank,
+                &mut liquidatee_marginfi_account.lending_account,
+            )?;
+
+            let liquidatee_liability_pre_balance: I80F48 =
+                liquidatee_liab_bank_account.bank.get_liability_amount(
+                    liquidatee_liab_bank_account.balance.liability_shares.into(),
+                )?;
+
+            liquidatee_liab_bank_account.increase_balance(liab_amount_final)?;
+
+            let liquidatee_liability_post_balance: I80F48 =
+                liquidatee_liab_bank_account.bank.get_liability_amount(
+                    liquidatee_liab_bank_account.balance.liability_shares.into(),
+                )?;
+
+            // SPL transfer
+            // Insurance fund receives fee
+            liquidatee_liab_bank_account.withdraw_spl_transfer(
+                insurance_fee_to_transfer,
+                ctx.accounts.bank_liquidity_vault.to_account_info(),
+                ctx.accounts.bank_insurance_vault.to_account_info(),
+                ctx.accounts
+                    .bank_liquidity_vault_authority
+                    .to_account_info(),
+                maybe_liab_bank_mint.as_ref(),
+                ctx.accounts.token_program.to_account_info(),
+                bank_signer!(
+                    BankVaultType::Liquidity,
+                    ctx.accounts.liab_bank.key(),
+                    liab_bank_liquidity_authority_bump
+                ),
+                ctx.remaining_accounts,
+            )?;
+
+            (
+                liquidatee_liability_pre_balance,
+                liquidatee_liability_post_balance,
+            )
+        };
+
+        liab_bank.collected_insurance_fees_outstanding =
+            I80F48::from(liab_bank.collected_insurance_fees_outstanding)
+                .checked_add(insurance_fee_dust)
+                .ok_or(MarginfiError::MathError)?
+                .into();
+
+        asset_bank.update_bank_cache(group)?;
+
+        liab_bank.update_bank_cache(group)?;
+
+        (
+            LiquidationBalances {
+                liquidatee_asset_balance: liquidatee_asset_pre_balance.to_num::<f64>(),
+                liquidatee_liability_balance: liquidatee_liability_pre_balance.to_num::<f64>(),
+                liquidator_asset_balance: liquidator_asset_pre_balance.to_num::<f64>(),
+                liquidator_liability_balance: liquidator_liability_pre_balance.to_num::<f64>(),
+            },
+            LiquidationBalances {
+                liquidatee_asset_balance: liquidatee_asset_post_balance.to_num::<f64>(),
+                liquidatee_liability_balance: liquidatee_liability_post_balance.to_num::<f64>(),
+                liquidator_asset_balance: liquidator_asset_post_balance.to_num::<f64>(),
+                liquidator_liability_balance: liquidator_liability_post_balance.to_num::<f64>(),
+            },
+        )
+    };
+
+    // Risk checks
+
+    let liquidator_remaining_acc_len = liquidator_marginfi_account.get_remaining_accounts_len()?;
+    let liquidator_accounts_starting_pos =
+        liquidatee_accounts_starting_pos - liquidator_remaining_acc_len;
+
+    let liquidator_remaining_accounts =
+        &ctx.remaining_accounts[liquidator_accounts_starting_pos..liquidatee_accounts_starting_pos];
+
+    let post_liquidation_health =
+        RiskEngine::new(&liquidatee_marginfi_account, liquidatee_remaining_accounts)?
+            .check_post_liquidation_condition_and_get_account_health(
+                &ctx.accounts.liab_bank.key(),
+                pre_liquidation_health,
+            )?;
+
+    liquidator_marginfi_account.lending_account.sort_balances();
+
+    // Verify liquidator account health
+    let (risk_result, _engine) = RiskEngine::check_account_init_health(
+        &liquidator_marginfi_account,
+        liquidator_remaining_accounts,
+        &mut None,
+    );
+    risk_result?;
+
+    emit!(LendingAccountLiquidateEvent {
+        header: AccountEventHeader {
+            signer: Some(ctx.accounts.authority.key()),
+            marginfi_account: liquidator_marginfi_account_loader.key(),
+            marginfi_account_authority: liquidator_marginfi_account.authority,
+            marginfi_group: marginfi_group_loader.key(),
+        },
+        liquidatee_marginfi_account: liquidatee_marginfi_account_loader.key(),
+        liquidatee_marginfi_account_authority: liquidatee_marginfi_account.authority,
+        asset_bank: ctx.accounts.asset_bank.key(),
+        asset_mint: ctx.accounts.asset_bank.load_mut()?.mint,
+        liability_bank: ctx.accounts.liab_bank.key(),
+        liability_mint: ctx.accounts.liab_bank.load_mut()?.mint,
+        liquidatee_pre_health: pre_liquidation_health.to_num::<f64>(),
+        liquidatee_post_health: post_liquidation_health.to_num::<f64>(),
+        pre_balances,
+        post_balances,
+    });
+
+    Ok(())
+}
 
 #[derive(Accounts)]
 pub struct LendingAccountLiquidate<'info> {

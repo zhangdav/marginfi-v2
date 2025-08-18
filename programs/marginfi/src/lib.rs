@@ -305,4 +305,12 @@ pub mod marginfi {
     ) -> MarginfiResult {
         marginfi_account::lending_account_withdraw(ctx, amount, withdraw_all)
     }
+
+    /// Liquidate a lending account balance of an unhealthy marginfi account
+    pub fn lending_account_liquidate<'info>(
+        ctx: Context<'_, '_, 'info, 'info, LendingAccountLiquidate<'info>>,
+        asset_amount: u64,
+    ) -> MarginfiResult {
+        marginfi_account::lending_account_liquidate(ctx, asset_amount)
+    }
 }

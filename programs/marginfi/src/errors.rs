@@ -18,6 +18,8 @@ pub enum MarginfiError {
     RiskEngineInitRejected,
     #[msg("Lending account balance slots are full")] // 6010
     LendingAccountBalanceSlotsFull,
+    #[msg("Amount to liquidate must be positive")] // 6012
+    ZeroLiquidationAmount,
     #[msg("Account is not bankrupt")] // 6013
     AccountNotBankrupt,
     #[msg("Account balance is not bad debt")] // 6014
@@ -102,6 +104,22 @@ pub enum MarginfiError {
     SwitchboardInvalidAccount,
     #[msg("Math error")] // 6062
     MathError,
+    #[msg("Trying to withdraw more assets than available")] // 6065
+    OverliquidationAttempt,
+    #[msg("Liability bank has no liabilities")] // 6066
+    NoLiabilitiesInLiabilityBank,
+    #[msg("Liability bank has assets")] // 6067
+    AssetsInLiabilityBank,
+    #[msg("Account is healthy and cannot be liquidated")] // 6068
+    HealthyAccount,
+    #[msg("Liability payoff too severe, exhausted liability")] // 6069
+    ExhaustedLiability,
+    #[msg("Liability payoff too severe, liability balance has assets")] // 6070
+    TooSeverePayoff,
+    #[msg("Liquidation too severe, account above maintenance requirement")] // 6071
+    TooSevereLiquidation,
+    #[msg("Liquidation would worsen account health")] // 6072
+    WorseHealthPostLiquidation,
     #[msg("Arena groups can only support two banks")] // 6073
     ArenaBankLimit,
     #[msg("Arena groups cannot return to non-arena status")] // 6074
@@ -112,6 +130,10 @@ pub enum MarginfiError {
     PythPushInvalidWindowSize,
     #[msg("Invalid fees destination account")] // 6077
     InvalidFeesDestinationAccount,
+    #[msg("Zero asset price")] // 6078
+    ZeroAssetPrice,
+    #[msg("Zero liability price")] // 6079
+    ZeroLiabilityPrice,
     #[msg("Oracle max confidence exceeded: try again later")] // 6080
     OracleMaxConfidenceExceeded,
     #[msg("Banks cannot close when they have open positions or emissions outstanding")] // 6081

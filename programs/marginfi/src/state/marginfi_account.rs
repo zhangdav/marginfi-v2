@@ -343,6 +343,20 @@ impl MarginfiAccount {
         self.migrated_to = Pubkey::default();
     }
 
+    pub fn get_remaining_accounts_len(&self) -> MarginfiResult<usize> {
+        let mut total = 0usize;
+        for balance in self
+            .lending_account
+            .balances
+            .iter()
+            .filter(|b| b.is_active())
+        {
+            let num_accounts = get_remaining_accounts_per_balance(balance)?;
+            total += num_accounts;
+        }
+        Ok(total)
+    }
+
     pub fn get_flag(&self, flag: u64) -> bool {
         self.account_flags & flag != 0
     }
@@ -756,6 +770,121 @@ impl<'info> RiskEngine<'_, 'info> {
 
         Ok(())
     }
+
+    /// Checks
+    /// 1. Account is liquidatable
+    /// 2. Account has an outstanding liability for the provided liability bank. This check is
+    ///    ignored if passing None.
+    /// * returns - account health (assets - liabs)
+    pub fn check_pre_liquidation_condition_and_get_account_health(
+        &self,
+        bank_pk: Option<&Pubkey>,
+        health_cache: &mut Option<&mut HealthCache>,
+    ) -> MarginfiResult<I80F48> {
+        check!(
+            !self.marginfi_account.get_flag(ACCOUNT_IN_FLASHLOAN),
+            MarginfiError::AccountInFlashloan
+        );
+
+        if bank_pk.is_some() {
+            let liability_bank_balance = self
+                .bank_accounts_with_price
+                .iter()
+                .find(|a| a.balance.bank_pk == *bank_pk.unwrap())
+                .ok_or(MarginfiError::LendingAccountBalanceNotFound)?;
+
+            check!(
+                !liability_bank_balance.is_empty(BalanceSide::Liabilities),
+                MarginfiError::NoLiabilitiesInLiabilityBank
+            );
+
+            check!(
+                liability_bank_balance.is_empty(BalanceSide::Assets),
+                MarginfiError::AssetsInLiabilityBank
+            );
+        }
+
+        let (assets, liabs) =
+            self.get_account_health_components(RiskRequirementType::Maintenance, health_cache)?;
+
+        let account_health = assets.checked_sub(liabs).ok_or_else(math_error!())?;
+
+        if let Some(cache) = health_cache {
+            cache.set_healthy(account_health > I80F48::ZERO);
+        }
+
+        if account_health > I80F48::ZERO {
+            msg!(
+                "pre_liquidation_health: {} ({} - {})",
+                account_health,
+                assets,
+                liabs
+            );
+            return err!(MarginfiError::HealthyAccount);
+        }
+
+        Ok(account_health)
+    }
+
+    /// Check that the account is at most at the maintenance requirement level post liquidation.
+    /// This check is used to ensure two things in the liquidation process:
+    /// 1. We check that the liquidatee's remaining liability is not empty
+    /// 2. Liquidatee account was below the maintenance requirement level before liquidation (as health can only increase, because liquidations always pay down liabilities)
+    /// 3. Liquidator didn't liquidate too many assets that would result in unnecessary loss for the liquidatee.
+    ///
+    /// This check works on the assumption that the liquidation always results in a reduction of risk.
+    ///
+    /// 1. We check that the paid off liability is not zero. Assuming the liquidation always pays off some liability, this ensures that the liquidation was not too large.
+    /// 2. We check that the account is still at most at the maintenance requirement level. This ensures that the liquidation was not too large overall.
+    pub fn check_post_liquidation_condition_and_get_account_health(
+        &self,
+        bank_pk: &Pubkey,
+        pre_liquidation_health: I80F48,
+    ) -> MarginfiResult<I80F48> {
+        check!(
+            !self.marginfi_account.get_flag(ACCOUNT_IN_FLASHLOAN),
+            MarginfiError::AccountInFlashloan
+        );
+
+        let liability_bank_balance = self
+            .bank_accounts_with_price
+            .iter()
+            .find(|a| a.balance.bank_pk == *bank_pk)
+            .unwrap();
+
+        check!(
+            !liability_bank_balance.is_empty(BalanceSide::Liabilities),
+            MarginfiError::ExhaustedLiability
+        );
+
+        check!(
+            liability_bank_balance.is_empty(BalanceSide::Assets),
+            MarginfiError::TooSeverePayoff
+        );
+
+        let (assets, liabs) =
+            self.get_account_health_components(RiskRequirementType::Maintenance, &mut None)?;
+
+        let account_health = assets.checked_sub(liabs).ok_or_else(math_error!())?;
+
+        check!(
+            account_health <= I80F48::ZERO,
+            MarginfiError::TooSevereLiquidation
+        );
+
+        if account_health <= pre_liquidation_health {
+            msg!(
+                "post_liquidation_health: {} ({} - {}), pre_liquidation_health: {}",
+                account_health,
+                assets,
+                liabs,
+                pre_liquidation_health
+            );
+            return err!(MarginfiError::WorseHealthPostLiquidation);
+        };
+
+        Ok(account_health)
+    }
 }
 
 pub struct BankAccountWrapper<'a> {
@@ -941,6 +1070,33 @@ impl<'a> BankAccountWrapper<'a> {
         Ok(spl_withdraw_amount
             .checked_to_num()
             .ok_or_else(math_error!())?)
+    }
+
+    // ------------ Hybrid operations for seamless repay + deposit / withdraw + borrow
+
+    /// Repay liability and deposit/increase asset depending on
+    /// the specified deposit amount and the existing balance.
+    pub fn increase_balance(&mut self, amount: I80F48) -> MarginfiResult {
+        self.increase_balance_internal(amount, BalanceIncreaseType::Any)
+    }
+
+    pub fn increase_balance_in_liquidation(&mut self, amount: I80F48) -> MarginfiResult {
+        self.increase_balance_internal(amount, BalanceIncreaseType::Any)
+    }
+
+    /// Withdraw asset and create/increase liability depending on
+    /// the specified deposit amount and the existing balance.
+    pub fn decrease_balance(&mut self, amount: I80F48) -> MarginfiResult {
+        self.decrease_balance_internal(amount, BalanceDecreaseType::Any)
+    }
+
+    /// Withdraw asset and create/increase liability depending on
+    /// the specified deposit amount and the existing balance.
+    ///
+    /// This function will also bypass borrow limits
+    /// so liquidations can happen in banks with maxed out borrows.
+    pub fn decrease_balance_in_liquidation(&mut self, amount: I80F48) -> MarginfiResult {
+        self.decrease_balance_internal(amount, BalanceDecreaseType::BypassBorrowLimit)
     }
 
     fn increase_balance_internal(
