@@ -149,3 +149,11 @@ cfg_if::cfg_if! {
 pub const ASSET_TAG_STAKED: u8 = 2;
 
 pub const ASSET_TAG_SOL: u8 = 1;
+
+// TODO move this to the global fee wallet eventually
+/// A nominal fee paid to the global wallet when intiating an account transfer. Primarily intended
+/// to avoid spamming account migration, which is mildly annoying to backend systems that track the
+/// state of accounts.
+/// * Should be ~ $0.50 or around that magnitude
+/// * In lamports
+pub const ACCOUNT_TRANSFER_FEE: u64 = 5_000_000;

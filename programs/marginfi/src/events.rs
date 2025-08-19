@@ -161,3 +161,11 @@ pub struct LiquidationBalances {
     pub liquidator_asset_balance: f64,
     pub liquidator_liability_balance: f64,
 }
+
+#[event]
+pub struct MarginfiAccountTransferToNewAccount {
+    pub header: AccountEventHeader,
+    pub old_account: Pubkey,
+    pub old_account_authority: Pubkey,
+    pub new_account_authority: Pubkey,
+}

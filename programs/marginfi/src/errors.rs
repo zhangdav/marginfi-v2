@@ -40,6 +40,8 @@ pub enum MarginfiError {
     OperationBorrowOnly,
     #[msg("Operation is repay-only")] // 6022
     OperationRepayOnly,
+    #[msg("No asset found")] // 6023
+    NoAssetFound,
     #[msg("No liability found")] // 6024
     NoLiabilityFound,
     #[msg("Invalid oracle setup")] // 6025
@@ -142,8 +144,8 @@ pub enum MarginfiError {
     OracleMaxConfidenceExceeded,
     #[msg("Banks cannot close when they have open positions or emissions outstanding")] // 6081
     BankCannotClose,
-    #[msg("No asset found")] // 6082
-    NoAssetFound,
+    #[msg("Account already migrated")] // 6082
+    AccountAlreadyMigrated,
 }
 
 impl From<MarginfiError> for ProgramError {

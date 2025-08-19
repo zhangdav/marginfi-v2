@@ -337,4 +337,8 @@ pub mod marginfi {
     ) -> MarginfiResult {
         marginfi_account::lending_account_withdraw_emissions_permissionless(ctx)
     }
+
+    pub fn transfer_to_new_account(ctx: Context<TransferToNewAccount>) -> MarginfiResult {
+        marginfi_account::transfer_to_new_account(ctx)
+    }
 }
