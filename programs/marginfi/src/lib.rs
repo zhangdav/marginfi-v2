@@ -353,4 +353,14 @@ pub mod marginfi {
     ) -> MarginfiResult {
         marginfi_account::lending_account_pulse_health(ctx)
     }
+
+    pub fn lending_account_close_balance(
+        ctx: Context<LendingAccountCloseBalance>,
+    ) -> MarginfiResult {
+        marginfi_account::lending_account_close_balance(ctx)
+    }
+
+    pub fn marginfi_account_close(ctx: Context<MarginfiAccountClose>) -> MarginfiResult {
+        marginfi_account::close_account(ctx)
+    }
 }

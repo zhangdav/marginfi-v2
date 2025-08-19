@@ -72,8 +72,12 @@ pub enum MarginfiError {
     AccountInFlashloan,
     #[msg("Illegal flashloan")] // 6038
     IllegalFlashloan,
+    #[msg("Illegal balance state")] // 6040
+    IllegalBalanceState,
     #[msg("Unauthorized")] // 6042
     Unauthorized,
+    #[msg("Invalid account authority")] // 6043
+    IllegalAction,
     #[msg("Token22 Banks require mint account as first remaining account")] // 6044
     T22MintRequired,
     #[msg("Invalid ATA for global fee account")] // 6045

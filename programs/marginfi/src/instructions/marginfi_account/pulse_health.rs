@@ -7,7 +7,6 @@ use crate::{
     constants::PROGRAM_VERSION,
     errors::MarginfiError,
     events::HealthPulseEvent,
-    prelude::*,
     state::{
         health_cache::HealthCache,
         marginfi_account::{MarginfiAccount, RiskEngine},

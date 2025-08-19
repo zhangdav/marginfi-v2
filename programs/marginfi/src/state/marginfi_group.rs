@@ -768,6 +768,7 @@ impl Bank {
             .ok_or_else(math_error!())?;
 
         self.cache.update_interest_rates(&interest_rates);
+
         Ok(())
     }
 

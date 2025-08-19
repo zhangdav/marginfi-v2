@@ -18,9 +18,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::token_interface::Mint;
 use bytemuck::{Pod, Zeroable};
 use fixed::types::I80F48;
-use fixed_macro::types::I80F48;
 use std::cmp::{max, min};
-use std::collections::btree_map::ValuesMut;
 use type_layout::TypeLayout;
 
 pub const ACCOUNT_IN_FLASHLOAN: u64 = 1 << 1;
@@ -369,6 +367,17 @@ impl MarginfiAccount {
     pub fn unset_flag(&mut self, flag: u64) {
         msg!("Unsetting account flag {:b}", flag);
         self.account_flags &= !flag;
+    }
+
+    pub fn can_be_closed(&self) -> bool {
+        let is_disabled = self.get_flag(ACCOUNT_DISABLED);
+        let only_has_empty_balances = self
+            .lending_account
+            .balances
+            .iter()
+            .all(|balance| balance.get_side().is_none());
+        
+        !is_disabled && only_has_empty_balances
     }
 }
 
@@ -952,6 +961,33 @@ impl<'a> BankAccountWrapper<'a> {
                 })
             }
         }
+    }
+
+    pub fn close_balance(&mut self) -> MarginfiResult<()> {
+        self.claim_emissions(Clock::get()?.unix_timestamp as u64)?;
+
+        let balance = &mut self.balance;
+        let bank = &mut self.bank;
+
+        let current_liability_amount =
+            bank.get_liability_amount(balance.liability_shares.into())?;
+        let current_asset_amount = bank.get_asset_amount(balance.asset_shares.into())?;
+
+        check!(
+            current_liability_amount.is_zero_with_tolerance(ZERO_AMOUNT_THRESHOLD),
+            MarginfiError::IllegalBalanceState,
+            "Balance has existing debt"
+        );
+
+        check!(
+            current_asset_amount.is_zero_with_tolerance(ZERO_AMOUNT_THRESHOLD),
+            MarginfiError::IllegalBalanceState,
+            "Balance has existing assets"
+        );
+
+        balance.close()?;
+
+        Ok(())
     }
 
     /// Deposit an asset, will repay any outstanding liabilities.
