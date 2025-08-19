@@ -7,6 +7,7 @@ mod liquidate;
 mod repay;
 mod withdraw;
 mod transfer_account;
+mod sort_balances;
 
 pub use borrow::*;
 pub use deposit::*;
@@ -17,3 +18,4 @@ pub use liquidate::*;
 pub use repay::*;
 pub use withdraw::*;
 pub use transfer_account::*;
+pub use sort_balances::*;

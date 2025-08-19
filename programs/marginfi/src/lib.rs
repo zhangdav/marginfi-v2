@@ -341,4 +341,10 @@ pub mod marginfi {
     pub fn transfer_to_new_account(ctx: Context<TransferToNewAccount>) -> MarginfiResult {
         marginfi_account::transfer_to_new_account(ctx)
     }
+
+    pub fn lending_account_sort_balances<'info>(
+        ctx: Context<'_, '_, 'info, 'info, SortBalances<'info>>,
+    ) -> MarginfiResult {
+        marginfi_account::lending_account_sort_balances(ctx)
+    }
 }
