@@ -363,4 +363,17 @@ pub mod marginfi {
     pub fn marginfi_account_close(ctx: Context<MarginfiAccountClose>) -> MarginfiResult {
         marginfi_account::close_account(ctx)
     }
+
+    pub fn lending_pool_update_fees_destination_account<'info>(
+        ctx: Context<'_, '_, 'info, 'info, LendingPoolUpdateFeesDestinationAccount<'info>>,
+    ) -> MarginfiResult {
+        marginfi_group::lending_pool_update_fees_destination_account(ctx)
+    }
+
+    pub fn config_group_fee(
+        ctx: Context<ConfigGroupFee>,
+        enable_program_fee: bool,
+    ) -> MarginfiResult {
+        marginfi_group::config_group_fee(ctx, enable_program_fee)
+    }
 }
