@@ -1,5 +1,5 @@
-use anchor_lang::prelude::*;
 use crate::{state::marginfi_account::MarginfiAccount, MarginfiResult};
+use anchor_lang::prelude::*;
 
 pub fn lending_account_sort_balances<'info>(
     ctx: Context<'_, '_, 'info, 'info, SortBalances<'info>>,

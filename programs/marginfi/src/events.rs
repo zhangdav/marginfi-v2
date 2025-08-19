@@ -1,5 +1,6 @@
 use crate::{
-    instructions::marginfi_group::StakedSettingsEditConfig, state::marginfi_group::BankConfigOpt,
+    instructions::marginfi_group::StakedSettingsEditConfig,
+    state::{health_cache::HealthCache, marginfi_group::BankConfigOpt},
 };
 use anchor_lang::prelude::*;
 
@@ -168,4 +169,10 @@ pub struct MarginfiAccountTransferToNewAccount {
     pub old_account: Pubkey,
     pub old_account_authority: Pubkey,
     pub new_account_authority: Pubkey,
+}
+
+#[event]
+pub struct HealthPulseEvent {
+    pub account: Pubkey,
+    pub health_cache: HealthCache,
 }

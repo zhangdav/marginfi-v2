@@ -12,6 +12,12 @@ pub enum MarginfiError {
     BankAssetCapacityExceeded,
     #[msg("Invalid transfer")] // 6004
     InvalidTransfer,
+    #[msg("Missing Oracle, Bank, LST mint, or Sol Pool")] // 6005
+    MissingPythOrBankAccount,
+    #[msg("Missing Pyth account")] // 6006
+    MissingPythAccount,
+    #[msg("Missing Bank account")] // 6007
+    MissingBankAccount,
     #[msg("Invalid bank account")] // 6008
     InvalidBankAccount,
     #[msg("RiskEngine rejected due to either bad health or stale oracles")] // 6009
@@ -184,5 +190,36 @@ impl From<u32> for MarginfiError {
             6001 => MarginfiError::BankNotFound,
             _ => MarginfiError::InternalLogicError,
         }
+    }
+}
+
+impl MarginfiError {
+    pub fn is_oracle_error(&self) -> bool {
+        matches!(
+            self,
+            MarginfiError::WrongNumberOfOracleAccounts
+                | MarginfiError::SwitchboardInvalidAccount
+                | MarginfiError::PythPushInvalidAccount
+                | MarginfiError::SwitchboardWrongAccountOwner
+                | MarginfiError::PythPushFeedIdNonHexCharacter
+                | MarginfiError::PythPushFeedIdMustBe32Bytes
+                | MarginfiError::PythPushInsufficientVerificationLevel
+                | MarginfiError::PythPushMismatchedFeedId
+                | MarginfiError::StakedPythPushWrongAccountOwner
+                | MarginfiError::PythPushWrongAccountOwner
+                | MarginfiError::WrongOracleAccountKeys
+                | MarginfiError::PythPushStalePrice
+                | MarginfiError::SwitchboardStalePrice
+                | MarginfiError::StakePoolValidationFailed
+                | MarginfiError::InvalidBankAccount
+                | MarginfiError::MissingBankAccount
+                | MarginfiError::MissingPythAccount
+                | MarginfiError::MissingPythOrBankAccount
+                | MarginfiError::PythPushInvalidWindowSize
+                | MarginfiError::OracleMaxConfidenceExceeded
+        )
+    }
+    pub fn is_risk_engine_rejection(&self) -> bool {
+        matches!(self, MarginfiError::RiskEngineInitRejected)
     }
 }

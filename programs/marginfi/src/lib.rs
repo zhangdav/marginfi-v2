@@ -347,4 +347,10 @@ pub mod marginfi {
     ) -> MarginfiResult {
         marginfi_account::lending_account_sort_balances(ctx)
     }
+
+    pub fn lending_account_pulse_health<'info>(
+        ctx: Context<'_, '_, 'info, 'info, PulseHealth<'info>>,
+    ) -> MarginfiResult {
+        marginfi_account::lending_account_pulse_health(ctx)
+    }
 }

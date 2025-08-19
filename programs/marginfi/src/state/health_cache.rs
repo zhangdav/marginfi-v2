@@ -8,6 +8,7 @@ use type_layout::TypeLayout;
 
 pub const HEALTHY: u32 = 1;
 pub const ENGINE_OK: u32 = 2;
+pub const ORACLE_OK: u32 = 4;
 
 assert_struct_size!(HealthCache, 304);
 assert_struct_align!(HealthCache, 8);
@@ -108,6 +109,14 @@ impl HealthCache {
             self.flags |= HEALTHY;
         } else {
             self.flags &= !HEALTHY;
+        }
+    }
+
+    pub fn set_oracle_ok(&mut self, ok: bool) {
+        if ok {
+            self.flags |= ORACLE_OK;
+        } else {
+            self.flags &= !ORACLE_OK;
         }
     }
 }
