@@ -27,18 +27,29 @@ pub fn lending_account_liquidate<'info>(
 ) -> MarginfiResult {
     check!(asset_amount > 0, MarginfiError::ZeroLiquidationAmount);
 
+    check!(
+        ctx.accounts.asset_bank.key() != ctx.accounts.liab_bank.key(),
+        MarginfiError::SameAssetAndLiabilityBanks
+    );
+
+    // Liquidators must repay debts in allowed asset types. A SOL debt can be repaid in any asset. A
+    // Staked Collateral debt must be repaid in SOL or staked collateral. A Default asset debt can
+    // be repaid in any Default asset or SOL.
     {
         let asset_bank = ctx.accounts.asset_bank.load()?;
         let liab_bank = ctx.accounts.liab_bank.load()?;
         validate_bank_asset_tags(&asset_bank, &liab_bank)?;
 
+        // Sanity check user/liquidator accounts will not contain positions with mismatching tags
+        // after liquidation.
+        // * Note: user will be repaid in liab_bank
         let user_acc = ctx.accounts.liquidatee_marginfi_account.load()?;
         validate_asset_tags(&liab_bank, &user_acc)?;
-
+        // * Note: Liquidator repays liab bank, and is paid in asset_bank.
         let liquidator_acc = ctx.accounts.liquidator_marginfi_account.load()?;
         validate_asset_tags(&liab_bank, &liquidator_acc)?;
         validate_asset_tags(&asset_bank, &liquidator_acc)?;
-    }
+    } // release immutable borrow of asset_bank/liab_bank + liquidatee/liquidator user accounts
 
     let LendingAccountLiquidate {
         liquidator_marginfi_account: liquidator_marginfi_account_loader,
@@ -88,7 +99,8 @@ pub fn lending_account_liquidate<'info>(
                 &mut None,
             )?;
 
-    // Accounting changes
+    // ##Accounting changes##
+
     let (pre_balances, post_balances) = {
         let asset_amount: I80F48 = I80F48::from_num(asset_amount);
 
@@ -144,7 +156,7 @@ pub fn lending_account_liquidate<'info>(
             liab_bank.mint_decimals,
         )?;
 
-        //Quantity of liability to be received by liquidatee
+        // Quantity of liability to be received by liquidatee
         let liab_amount_final: I80F48 = calc_amount(
             calc_value(
                 asset_amount,
@@ -210,7 +222,7 @@ pub fn lending_account_liquidate<'info>(
                 .bank
                 .get_asset_amount(bank_account.balance.asset_shares.into())?;
 
-            (pre_balance, asset_price)
+            (pre_balance, post_balance)
         };
 
         // Liquidator receives `asset_quantity` amount of collateral
@@ -263,7 +275,7 @@ pub fn lending_account_liquidate<'info>(
                     liquidatee_liab_bank_account.balance.liability_shares.into(),
                 )?;
 
-            // SPL transfer
+            // ## SPL transfer ##
             // Insurance fund receives fee
             liquidatee_liab_bank_account.withdraw_spl_transfer(
                 insurance_fee_to_transfer,
@@ -314,7 +326,7 @@ pub fn lending_account_liquidate<'info>(
         )
     };
 
-    // Risk checks
+    // ## Risk checks ##
 
     let liquidator_remaining_acc_len = liquidator_marginfi_account.get_remaining_accounts_len()?;
     let liquidator_accounts_starting_pos =
@@ -323,12 +335,19 @@ pub fn lending_account_liquidate<'info>(
     let liquidator_remaining_accounts =
         &ctx.remaining_accounts[liquidator_accounts_starting_pos..liquidatee_accounts_starting_pos];
 
+    // TODO why call RiskEngine::new here again instead of reusing the one we made in line ~151? Is
+    // it because we mutated the liab bank and corresponding balance? Is reloading the entire engine
+    // more CU intensive than mutating the old engine with the updated balance + bank
+
+    // Verify liquidatee liquidation post health
     let post_liquidation_health =
         RiskEngine::new(&liquidatee_marginfi_account, liquidatee_remaining_accounts)?
             .check_post_liquidation_condition_and_get_account_health(
                 &ctx.accounts.liab_bank.key(),
                 pre_liquidation_health,
             )?;
+
+    // TODO consider if health cache update here is worth blowing the extra CU
 
     liquidator_marginfi_account.lending_account.sort_balances();
 

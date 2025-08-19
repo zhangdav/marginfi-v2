@@ -313,4 +313,28 @@ pub mod marginfi {
     ) -> MarginfiResult {
         marginfi_account::lending_account_liquidate(ctx, asset_amount)
     }
+
+    pub fn lending_account_withdraw_emissions<'info>(
+        ctx: Context<'_, '_, 'info, 'info, LendingAccountWithdrawEmissions<'info>>,
+    ) -> MarginfiResult {
+        marginfi_account::lending_account_withdraw_emissions(ctx)
+    }
+
+    pub fn lending_account_settle_emissions(
+        ctx: Context<LendingAccountSettleEmissions>,
+    ) -> MarginfiResult {
+        marginfi_account::lending_account_settle_emissions(ctx)
+    }
+
+    pub fn marginfi_account_update_emissions_destination_account<'info>(
+        ctx: Context<'_, '_, 'info, 'info, MarginfiAccountUpdateEmissionsDestinationAccount<'info>>,
+    ) -> MarginfiResult {
+        marginfi_account::marginfi_account_update_emissions_destination_account(ctx)
+    }
+
+    pub fn lending_account_withdraw_emissions_permissionless<'info>(
+        ctx: Context<'_, '_, 'info, 'info, LendingAccountWithdrawEmissionsPermissionless<'info>>,
+    ) -> MarginfiResult {
+        marginfi_account::lending_account_withdraw_emissions_permissionless(ctx)
+    }
 }

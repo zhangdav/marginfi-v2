@@ -104,6 +104,10 @@ pub enum MarginfiError {
     SwitchboardInvalidAccount,
     #[msg("Math error")] // 6062
     MathError,
+    #[msg("Invalid emissions destination account")] // 6063
+    InvalidEmissionsDestinationAccount,
+    #[msg("Asset and liability bank cannot be the same")] // 6064
+    SameAssetAndLiabilityBanks,
     #[msg("Trying to withdraw more assets than available")] // 6065
     OverliquidationAttempt,
     #[msg("Liability bank has no liabilities")] // 6066

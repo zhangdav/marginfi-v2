@@ -1387,6 +1387,24 @@ impl<'a> BankAccountWrapper<'a> {
             remaining_accounts,
         )
     }
+
+    /// Claim any outstanding emissions, and return the max amount that can be withdrawn.
+    pub fn settle_emissions_and_get_transfer_amount(&mut self) -> MarginfiResult<u64> {
+        self.claim_emissions(Clock::get()?.unix_timestamp as u64)?;
+
+        let outstanding_emissions_floored = I80F48::from(self.balance.emissions_outstanding)
+            .checked_floor()
+            .ok_or_else(math_error!())?;
+        let new_outstanding_amount = I80F48::from(self.balance.emissions_outstanding)
+            .checked_sub(outstanding_emissions_floored)
+            .ok_or_else(math_error!())?;
+
+        self.balance.emissions_outstanding = new_outstanding_amount.into();
+
+        Ok(outstanding_emissions_floored
+            .checked_to_num()
+            .ok_or_else(math_error!())?)
+    }
 }
 
 fn calc_emissions(
