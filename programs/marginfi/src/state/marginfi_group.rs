@@ -1263,7 +1263,7 @@ macro_rules! assert_eq_with_tolerance {
             $test_val,
             $val,
             $tolerance
-        );
+        )
     };
 }
 
