@@ -23,6 +23,7 @@ use type_layout::TypeLayout;
 
 pub const ACCOUNT_IN_FLASHLOAN: u64 = 1 << 1;
 pub const ACCOUNT_DISABLED: u64 = 1 << 0;
+pub const ACCOUNT_TRANSFER_AUTHORITY_DEPRECATED: u64 = 1 << 3;
 
 /// 4 for `ASSET_TAG_STAKED` (bank, oracle, lst mint, lst pool), 2 for all others (bank, oracle)
 pub fn get_remaining_accounts_per_bank(bank: &Bank) -> MarginfiResult<usize> {
@@ -362,6 +363,33 @@ impl MarginfiAccount {
     pub fn unset_flag(&mut self, flag: u64) {
         msg!("Unsetting account flag {:b}", flag);
         self.account_flags &= !flag;
+    }
+
+    pub fn set_new_account_authority_checked(
+        &mut self,
+        new_authority: Pubkey,
+    ) -> MarginfiResult<()> {
+        // check if new account authority flag is set
+        if !self.get_flag(ACCOUNT_TRANSFER_AUTHORITY_DEPRECATED) || self.get_flag(ACCOUNT_DISABLED)
+        {
+            return Err(MarginfiError::IllegalAccountAuthorityTransfer.into());
+        }
+
+        // update account authority
+        let old_authority = self.authority;
+        self.authority = new_authority;
+
+        // unset flag after updating the account authority
+        self.unset_flag(ACCOUNT_TRANSFER_AUTHORITY_DEPRECATED);
+
+        msg!(
+            "Transferred account authority from {:?} to {:?} in group {:?}",
+            old_authority,
+            self.authority,
+            self.group
+        );
+
+        Ok(())
     }
 
     pub fn can_be_closed(&self) -> bool {
@@ -1475,4 +1503,174 @@ pub fn calc_amount(value: I80F48, price: I80F48, mint_decimals: u8) -> MarginfiR
         .ok_or_else(math_error!())?;
 
     Ok(qt)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use fixed_macro::types::I80F48;
+
+    #[test]
+    fn test_calc_asset_value() {
+        assert_eq!(
+            calc_value(I80F48!(10_000_000), I80F48!(1_000_000), 6, None).unwrap(),
+            I80F48!(10_000_000)
+        );
+
+        assert_eq!(
+            calc_value(I80F48!(1_000_000_000), I80F48!(10_000_000), 9, None).unwrap(),
+            I80F48!(10_000_000)
+        );
+
+        assert_eq!(
+            calc_value(I80F48!(1_000_000_000), I80F48!(10_000_000), 9, None).unwrap(),
+            I80F48!(10_000_000)
+        );
+    }
+
+    #[test]
+    fn test_account_authority_transfer() {
+        let group: [u8; 32] = [0; 32];
+        let authority: [u8; 32] = [1; 32];
+        let bank_pk: [u8; 32] = [2; 32];
+        let new_authority: [u8; 32] = [3; 32];
+
+        let mut acc = MarginfiAccount {
+            group: group.into(),
+            authority: authority.into(),
+            emissions_destination_account: Pubkey::default(),
+            lending_account: LendingAccount {
+                balances: [Balance {
+                    active: 1,
+                    bank_pk: bank_pk.into(),
+                    bank_asset_tag: ASSET_TAG_DEFAULT,
+                    _pad0: [0; 6],
+                    asset_shares: WrappedI80F48::default(),
+                    liability_shares: WrappedI80F48::default(),
+                    emissions_outstanding: WrappedI80F48::default(),
+                    last_update: 0,
+                    _padding: [0_u64],
+                }; 16],
+                _padding: [0; 8],
+            },
+            account_flags: ACCOUNT_TRANSFER_AUTHORITY_DEPRECATED,
+            migrated_from: Pubkey::default(),
+            migrated_to: Pubkey::default(),
+            health_cache: HealthCache::zeroed(),
+            _padding: [0; 13],
+        };
+
+        assert!(acc.get_flag(ACCOUNT_TRANSFER_AUTHORITY_DEPRECATED));
+
+        match acc.set_new_account_authority_checked(new_authority.into()) {
+            Ok(_) => (),
+            Err(_) => panic!("transferring account authority failed"),
+        }
+    }
+
+    #[test]
+    fn test_calc_emissions() {
+        let balance_amount: u64 = 106153222432271169;
+        let emissions_rate = 1.5;
+
+        // 1 second
+        let period = 1;
+        let emissions = calc_emissions(
+            I80F48::from_num(period),
+            I80F48::from_num(balance_amount),
+            9,
+            I80F48::from_num(emissions_rate),
+        );
+        assert!(emissions.is_ok());
+        assert_eq!(emissions.unwrap(), I80F48::from_num(5.049144902600414));
+
+        // 126 days
+        let period = 126 * 24 * 60 * 60;
+        let emissions = calc_emissions(
+            I80F48::from_num(period),
+            I80F48::from_num(balance_amount),
+            9,
+            I80F48::from_num(emissions_rate),
+        );
+        assert!(emissions.is_ok());
+
+        // 2 years
+        let period = 2 * 365 * 24 * 60 * 60;
+        let emissions = calc_emissions(
+            I80F48::from_num(period),
+            I80F48::from_num(balance_amount),
+            9,
+            I80F48::from_num(emissions_rate),
+        );
+        assert!(emissions.is_ok());
+
+        {
+            // 10x balance amount
+            let balance_amount = balance_amount * 10;
+            let emissions = calc_emissions(
+                I80F48::from_num(period),
+                I80F48::from_num(balance_amount),
+                9,
+                I80F48::from_num(emissions_rate),
+            );
+            assert!(emissions.is_ok());
+        }
+
+        // 20 years + 100x emissions rate
+        let period = 20 * 365 * 24 * 60 * 60;
+        let emissions_rate = emissions_rate * 100.0;
+        let emissions = calc_emissions(
+            I80F48::from_num(period),
+            I80F48::from_num(balance_amount),
+            9,
+            I80F48::from_num(emissions_rate),
+        );
+        assert!(emissions.is_ok());
+
+        {
+            // u64::MAX deposit amount
+            let balance_amount = u64::MAX;
+            let emissions_rate = emissions_rate;
+            let emissions = calc_emissions(
+                I80F48::from_num(period),
+                I80F48::from_num(balance_amount),
+                9,
+                I80F48::from_num(emissions_rate),
+            );
+            assert!(emissions.is_ok());
+        }
+
+        {
+            // 10000x emissions rate
+            let balance_amount = u64::MAX;
+            let emissions_rate = emissions_rate * 10000.0;
+            let emissions = calc_emissions(
+                I80F48::from_num(period),
+                I80F48::from_num(balance_amount),
+                9,
+                I80F48::from_num(emissions_rate),
+            );
+            assert!(emissions.is_ok());
+        }
+
+        {
+            let balance_amount = I80F48::from_num(10000000);
+            let emissions_rate = I80F48::from_num(1.5);
+            let period = I80F48::from_num(10 * 24 * 60 * 60);
+
+            let emissions = period
+                .checked_mul(balance_amount)
+                .unwrap()
+                .checked_div(EXP_10_I80F48[9])
+                .unwrap()
+                .checked_mul(emissions_rate)
+                .unwrap()
+                .checked_div(SECONDS_PER_YEAR)
+                .unwrap();
+
+            let emissions_new = calc_emissions(period, balance_amount, 9, emissions_rate).unwrap();
+
+            assert!(emissions_new - emissions < I80F48::from_num(0.00000001));
+        }
+    }
 }

@@ -387,7 +387,7 @@ mod tests {
         let mut entries = Vec::new();
         for i in 0..(MAX_EMODE_ENTRIES as u16 + 1) {
             entries.push(generic_entry(i));
-        } 
+        }
         // This call should panic.
         let _ = EmodeConfig::from_entries(&entries);
     }
