@@ -8,6 +8,7 @@ use crate::errors::MarginfiError;
 use crate::prelude::MarginfiResult;
 use crate::state::marginfi_group::BankConfig;
 use crate::{check, debug, live, math_error, msg, require_keys_eq};
+use anchor_lang::prelude::borsh;
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{borsh1::try_from_slice_unchecked, stake::state::StakeStateV2};
 use anchor_spl::token::Mint;
@@ -47,8 +48,6 @@ impl OracleSetup {
         }
     }
 }
-
-// TODO: PriceBias
 
 #[enum_dispatch]
 pub trait PriceAdapter {
@@ -468,9 +467,6 @@ impl PythPushOraclePriceFeed {
         })
     }
 
-    // TODO: load_unchecked
-    // TODO: peek_feed_id
-
     fn get_confidence_interval(
         &self,
         use_ema: bool,
@@ -746,7 +742,6 @@ impl From<&PullFeedAccountData> for LitePullFeedAccountData {
         }
     }
 }
-// TODO: impl From<Ref<'_, PullFeedAccountData>> for LitePullFeedAccountData
 
 #[derive(Copy, Clone, Debug)]
 pub enum OraclePriceType {
@@ -757,15 +752,16 @@ pub enum OraclePriceType {
     RealTime,
 }
 
-pub fn check_ai_and_feed_id(ai: &AccountInfo, feed_id: &FeedId) -> MarginfiResult {
-    let price_feed_account = load_price_update_v2_checked(ai)?;
-
-    check!(
-        &price_feed_account.price_message.feed_id.eq(feed_id),
-        MarginfiError::PythPushMismatchedFeedId
-    );
-
-    Ok(())
+impl From<Ref<'_, PullFeedAccountData>> for LitePullFeedAccountData {
+    fn from(feed: Ref<'_, PullFeedAccountData>) -> Self {
+        Self {
+            result: feed.result,
+            #[cfg(feature = "client")]
+            feed_hash: feed.feed_hash,
+            #[cfg(feature = "client")]
+            last_update_timestamp: feed.last_update_timestamp,
+        }
+    }
 }
 
 #[inline(always)]
@@ -842,8 +838,6 @@ pub fn load_price_update_v2_checked(ai: &AccountInfo) -> MarginfiResult<PriceUpd
         &mut &price_feed_data.as_ref()[8..],
     )?)
 }
-
-// TODO: pyth_price_components_to_i80f48
 
 #[derive(Copy, Clone, Debug)]
 pub enum PriceBias {

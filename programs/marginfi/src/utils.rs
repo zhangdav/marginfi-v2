@@ -1,8 +1,9 @@
-use crate::constants::{ASSET_TAG_DEFAULT, ASSET_TAG_STAKED};
+use crate::constants::{ASSET_TAG_DEFAULT, ASSET_TAG_SOL, ASSET_TAG_STAKED};
 use crate::errors::MarginfiError;
 use crate::state::marginfi_account::MarginfiAccount;
 use crate::state::marginfi_group::{Bank, WrappedI80F48};
 use crate::MarginfiResult;
+use crate::{bank_authority_seed, bank_seed};
 use anchor_lang::prelude::*;
 use anchor_spl::{
     token::Token,
@@ -195,4 +196,47 @@ pub fn validate_bank_asset_tags(bank_a: &Bank, bank_b: &Bank) -> MarginfiResult 
     }
 
     Ok(())
+}
+
+pub fn find_bank_vault_pda(
+    bank_pk: &Pubkey,
+    vault_type: crate::state::marginfi_group::BankVaultType,
+) -> (Pubkey, u8) {
+    Pubkey::find_program_address(bank_seed!(vault_type, bank_pk), &crate::id())
+}
+
+pub fn find_bank_vault_authority_pda(
+    bank_pk: &Pubkey,
+    vault_type: crate::state::marginfi_group::BankVaultType,
+) -> (Pubkey, u8) {
+    Pubkey::find_program_address(bank_authority_seed!(vault_type, bank_pk), &crate::id())
+}
+
+pub fn nonzero_fee(mint_ai: AccountInfo, epoch: u64) -> MarginfiResult<bool> {
+    if mint_ai.owner.eq(&Token::id()) {
+        return Ok(false);
+    }
+    let mint_data = mint_ai.try_borrow_data()?;
+    let mint = StateWithExtensions::<spl_token_2022::state::Mint>::unpack(&mint_data)?;
+    if let Ok(transfer_fee_config) = mint.get_extension::<TransferFeeConfig>() {
+        return Ok(u16::from(
+            transfer_fee_config
+                .get_epoch_fee(epoch)
+                .transfer_fee_basis_points,
+        ) != 0);
+    }
+    Ok(false)
+}
+
+pub fn hex_to_bytes(hex: &str) -> Vec<u8> {
+    hex.as_bytes()
+        .chunks(2)
+        .map(|chunk| {
+            let high = chunk[0] as char;
+            let low = chunk[1] as char;
+            let high = high.to_digit(16).expect("Invalid hex character") as u8;
+            let low = low.to_digit(16).expect("Invalid hex character") as u8;
+            (high << 4) | low
+        })
+        .collect()
 }

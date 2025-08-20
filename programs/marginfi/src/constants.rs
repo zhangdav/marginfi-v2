@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::pubkey;
 use fixed::types::I80F48;
 use fixed_macro::types::I80F48;
 use pyth_solana_receiver_sdk::price_update::VerificationLevel;
@@ -7,8 +8,8 @@ pub const MAX_ORACLE_KEYS: usize = 5;
 pub const ASSET_TAG_DEFAULT: u8 = 0;
 pub const TOTAL_ASSET_VALUE_INIT_LIMIT_INACTIVE: u64 = 0;
 
-pub const EMISSIONS_FLAG_LENDING_ACTIVE: u64 = 1 << 1;
-pub const EMISSIONS_FLAG_BORROW_ACTIVE: u64 = 1 << 0;
+/// The default fee, in native SOL in native decimals (i.e lamports) used in testing
+pub const INIT_BANK_ORIGINATION_FEE_DEFAULT: u32 = 10000;
 
 /// Cutoff timestamp for balance last_update used in accounting collected emissions.
 /// Any balance updates before this timestamp are ignored, and current_timestamp is used instead.
@@ -66,10 +67,12 @@ pub const LIQUIDATION_INSURANCE_FEE: I80F48 = I80F48!(0.025);
 /// this is to account for any artifacts resulting from binary fraction arithemtic.
 pub const EMPTY_BALANCE_THRESHOLD: I80F48 = I80F48!(1);
 
-pub const EMISSION_FLAG_BORROW_ACTIVE: u64 = 1 << 0;
-pub const EMISSION_FLAG_LENDING_ACTIVE: u64 = 1 << 1;
-pub(crate) const EMISSION_FLAGS: u64 = EMISSION_FLAG_BORROW_ACTIVE | EMISSION_FLAG_LENDING_ACTIVE;
-pub(crate) const GROUP_FLAGS: u64 = PERMISSIONLESS_BAD_DEBT_SETTLEMENT_FLAG | FREEZE_SETTINGS;
+pub const EMISSIONS_FLAG_BORROW_ACTIVE: u64 = 1 << 0;
+pub const EMISSIONS_FLAG_LENDING_ACTIVE: u64 = 1 << 1;
+pub(crate) const EMISSIONS_FLAGS: u64 =
+    EMISSIONS_FLAG_BORROW_ACTIVE | EMISSIONS_FLAG_LENDING_ACTIVE;
+pub(crate) const GROUP_FLAGS: u64 =
+    PERMISSIONLESS_BAD_DEBT_SETTLEMENT_FLAG | FREEZE_SETTINGS | CLOSE_ENABLED_FLAG;
 
 pub const SECONDS_PER_YEAR: I80F48 = I80F48!(31_536_000);
 

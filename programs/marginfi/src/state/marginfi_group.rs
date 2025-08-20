@@ -1,6 +1,6 @@
 use crate::borsh::{BorshDeserialize, BorshSerialize};
 use crate::constants::{
-    ASSET_TAG_DEFAULT, CLOSE_ENABLED_FLAG, EMISSION_FLAGS, FEE_VAULT_AUTHORITY_SEED,
+    ASSET_TAG_DEFAULT, CLOSE_ENABLED_FLAG, EMISSIONS_FLAGS, FEE_VAULT_AUTHORITY_SEED,
     FEE_VAULT_SEED, FREEZE_SETTINGS, GROUP_FLAGS, INSURANCE_VAULT_AUTHORITY_SEED,
     INSURANCE_VAULT_SEED, LIQUIDITY_VAULT_AUTHORITY_SEED, LIQUIDITY_VAULT_SEED, MAX_ORACLE_KEYS,
     MAX_PYTH_ORACLE_AGE, ORACLE_MIN_AGE, PERMISSIONLESS_BAD_DEBT_SETTLEMENT_FLAG,
@@ -953,7 +953,7 @@ impl Bank {
     }
 
     const fn verify_emissions_flags(flags: u64) -> bool {
-        flags & EMISSION_FLAGS == flags
+        flags & EMISSIONS_FLAGS == flags
     }
 
     const fn verify_group_flags(flags: u64) -> bool {

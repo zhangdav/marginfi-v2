@@ -24,23 +24,18 @@ use type_layout::TypeLayout;
 pub const ACCOUNT_IN_FLASHLOAN: u64 = 1 << 1;
 pub const ACCOUNT_DISABLED: u64 = 1 << 0;
 
+/// 4 for `ASSET_TAG_STAKED` (bank, oracle, lst mint, lst pool), 2 for all others (bank, oracle)
 pub fn get_remaining_accounts_per_bank(bank: &Bank) -> MarginfiResult<usize> {
     get_remaining_accounts_per_asset_tag(bank.config.asset_tag)
 }
 
-fn get_remaining_accounts_per_asset_tag(asset_tag: u8) -> MarginfiResult<usize> {
-    match asset_tag {
-        ASSET_TAG_DEFAULT | ASSET_TAG_SOL => Ok(2),
-        ASSET_TAG_STAKED => Ok(4),
-        _ => err!(MarginfiError::AssetTagMismatch),
-    }
-}
-
+/// 4 for `ASSET_TAG_STAKED` (bank, oracle, lst mint, lst pool), 2 for all others (bank, oracle)
 fn get_remaining_accounts_per_balance(balance: &Balance) -> MarginfiResult<usize> {
-    get_remaining_accounts_per_balance_with_tag(balance.bank_asset_tag)
+    get_remaining_accounts_per_asset_tag(balance.bank_asset_tag)
 }
 
-fn get_remaining_accounts_per_balance_with_tag(asset_tag: u8) -> MarginfiResult<usize> {
+/// 4 for `ASSET_TAG_STAKED` (bank, oracle, lst mint, lst pool), 2 for all others (bank, oracle)
+fn get_remaining_accounts_per_asset_tag(asset_tag: u8) -> MarginfiResult<usize> {
     match asset_tag {
         ASSET_TAG_DEFAULT | ASSET_TAG_SOL => Ok(2),
         ASSET_TAG_STAKED => Ok(4),
@@ -101,7 +96,7 @@ impl<'info> BankAccountWithPriceFeed<'_, 'info> {
             .map(|balance| {
                 let bank_ai: Option<&AccountInfo<'info>> = remaining_ais.get(account_index);
                 if bank_ai.is_none() {
-                    msg!("Ran out of remaining accoubnts at {:?}", account_index);
+                    msg!("Ran out of remaining accounts at {:?}", account_index);
                     return err!(MarginfiError::InvalidBankAccount);
                 }
                 let bank_ai = bank_ai.unwrap();
@@ -376,7 +371,7 @@ impl MarginfiAccount {
             .balances
             .iter()
             .all(|balance| balance.get_side().is_none());
-        
+
         !is_disabled && only_has_empty_balances
     }
 }
@@ -525,7 +520,7 @@ pub fn calc_value(
     #[cfg(target_os = "solana")]
     crate::debug!(
         "weighted_asset_qt: {}, price: {}, expo: {}",
-        weight_asset_amount,
+        weighted_asset_amount,
         price,
         mint_decimals
     );
@@ -634,7 +629,7 @@ impl<'info> RiskEngine<'_, 'info> {
         Ok(())
     }
 
-    pub fn check_account_risk_tiers(&self) -> MarginfiResult {
+    fn check_account_risk_tiers(&self) -> MarginfiResult {
         let mut isolated_risk_count = 0;
         let mut total_liability_balances = 0;
 
@@ -1117,7 +1112,7 @@ impl<'a> BankAccountWrapper<'a> {
     }
 
     pub fn increase_balance_in_liquidation(&mut self, amount: I80F48) -> MarginfiResult {
-        self.increase_balance_internal(amount, BalanceIncreaseType::Any)
+        self.increase_balance_internal(amount, BalanceIncreaseType::BypassDepositLimit)
     }
 
     /// Withdraw asset and create/increase liability depending on
@@ -1141,7 +1136,7 @@ impl<'a> BankAccountWrapper<'a> {
         operation_type: BalanceIncreaseType,
     ) -> MarginfiResult {
         debug!(
-            "Balance increase: {} {type: {:?}",
+            "Balance increase: {} (type: {:?})",
             balance_delta, operation_type
         );
 
@@ -1323,6 +1318,10 @@ impl<'a> BankAccountWrapper<'a> {
             (Some(BalanceSide::Assets), true, _) => Some(
                 self.bank
                     .get_asset_amount(self.balance.asset_shares.into())?,
+            ),
+            (Some(BalanceSide::Liabilities), _, true) => Some(
+                self.bank
+                    .get_liability_amount(self.balance.liability_shares.into())?,
             ),
             _ => None,
         } {

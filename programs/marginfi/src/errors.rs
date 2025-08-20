@@ -18,12 +18,14 @@ pub enum MarginfiError {
     MissingPythAccount,
     #[msg("Missing Bank account")] // 6007
     MissingBankAccount,
-    #[msg("Invalid bank account")] // 6008
+    #[msg("Invalid Bank account")] // 6008
     InvalidBankAccount,
     #[msg("RiskEngine rejected due to either bad health or stale oracles")] // 6009
     RiskEngineInitRejected,
     #[msg("Lending account balance slots are full")] // 6010
     LendingAccountBalanceSlotsFull,
+    #[msg("Bank already exists")] // 6011
+    BankAlreadyExists,
     #[msg("Amount to liquidate must be positive")] // 6012
     ZeroLiquidationAmount,
     #[msg("Account is not bankrupt")] // 6013
@@ -56,24 +58,34 @@ pub enum MarginfiError {
     IllegalUtilizationRatio,
     #[msg("Bank borrow cap exceeded")] // 6027
     BankLiabilityCapacityExceeded,
+    #[msg("Invalid Price")] // 6028
+    InvalidPrice,
     #[msg("Account can have only one liability when account is under isolated risk")] // 6029
     IsolatedAccountIllegalState,
     #[msg("Emissions already setup")] // 6030
     EmissionsAlreadySetup,
     #[msg("Oracle is not set")] // 6031
     OracleNotSetup,
+    #[msg("Invalid switchboard decimal conversion")] // 6032
+    InvalidSwitchboardDecimalConversion,
     #[msg("Cannot close balance because of outstanding emissions")] // 6033
     CannotCloseOutstandingEmissions,
     #[msg("Update emissions error")] //6034
     EmissionsUpdateError,
     #[msg("Account disabled")] // 6035
     AccountDisabled,
+    #[msg("Account can't temporarily open 3 balances, please close a balance first")] // 6036
+    AccountTempActiveBalanceLimitExceeded,
     #[msg("Illegal action during flashloan")] // 6037
     AccountInFlashloan,
     #[msg("Illegal flashloan")] // 6038
     IllegalFlashloan,
+    #[msg("Illegal flag")] // 6039
+    IllegalFlag,
     #[msg("Illegal balance state")] // 6040
     IllegalBalanceState,
+    #[msg("Illegal account authority transfer")] // 6041
+    IllegalAccountAuthorityTransfer,
     #[msg("Unauthorized")] // 6042
     Unauthorized,
     #[msg("Invalid account authority")] // 6043
@@ -100,12 +112,15 @@ pub enum MarginfiError {
     PythPushWrongAccountOwner,
     #[msg("Staked Pyth Push oracle: wrong account owner")] // 6054
     StakedPythPushWrongAccountOwner,
+    // TODO remove in 0.1.5
     #[msg("Pyth Push oracle: mismatched feed id")] // 6055
     PythPushMismatchedFeedId,
     #[msg("Pyth Push oracle: insufficient verification level")] // 6056
     PythPushInsufficientVerificationLevel,
+    // TODO remove in 0.1.5
     #[msg("Pyth Push oracle: feed id must be 32 Bytes")] // 6057
     PythPushFeedIdMustBe32Bytes,
+    // TODO remove in 0.1.5
     #[msg("Pyth Push oracle: feed id contains non-hex characters")] // 6058
     PythPushFeedIdNonHexCharacter,
     #[msg("Switchboard oracle: wrong account owner")] // 6059
@@ -192,10 +207,99 @@ impl From<u32> for MarginfiError {
     fn from(value: u32) -> Self {
         match value {
             6001 => MarginfiError::BankNotFound,
+            6002 => MarginfiError::LendingAccountBalanceNotFound,
+            6003 => MarginfiError::BankAssetCapacityExceeded,
+            6004 => MarginfiError::InvalidTransfer,
+            6005 => MarginfiError::MissingPythOrBankAccount,
+            6006 => MarginfiError::MissingPythAccount,
+            6007 => MarginfiError::MissingBankAccount,
+            6008 => MarginfiError::InvalidBankAccount,
+            6009 => MarginfiError::RiskEngineInitRejected,
+            6010 => MarginfiError::LendingAccountBalanceSlotsFull,
+            6011 => MarginfiError::BankAlreadyExists,
+            6012 => MarginfiError::ZeroLiquidationAmount,
+            6013 => MarginfiError::AccountNotBankrupt,
+            6014 => MarginfiError::BalanceNotBadDebt,
+            6015 => MarginfiError::InvalidConfig,
+            6016 => MarginfiError::BankPaused,
+            6017 => MarginfiError::BankReduceOnly,
+            6018 => MarginfiError::BankAccountNotFound,
+            6019 => MarginfiError::OperationDepositOnly,
+            6020 => MarginfiError::OperationWithdrawOnly,
+            6021 => MarginfiError::OperationBorrowOnly,
+            6022 => MarginfiError::OperationRepayOnly,
+            6023 => MarginfiError::NoAssetFound,
+            6024 => MarginfiError::NoLiabilityFound,
+            6025 => MarginfiError::InvalidOracleSetup,
+            6026 => MarginfiError::IllegalUtilizationRatio,
+            6027 => MarginfiError::BankLiabilityCapacityExceeded,
+            6028 => MarginfiError::InvalidPrice,
+            6029 => MarginfiError::IsolatedAccountIllegalState,
+            6030 => MarginfiError::EmissionsAlreadySetup,
+            6031 => MarginfiError::OracleNotSetup,
+            6032 => MarginfiError::InvalidSwitchboardDecimalConversion,
+            6033 => MarginfiError::CannotCloseOutstandingEmissions,
+            6034 => MarginfiError::EmissionsUpdateError,
+            6035 => MarginfiError::AccountDisabled,
+            6036 => MarginfiError::AccountTempActiveBalanceLimitExceeded,
+            6037 => MarginfiError::AccountInFlashloan,
+            6038 => MarginfiError::IllegalFlashloan,
+            6039 => MarginfiError::IllegalFlag,
+            6040 => MarginfiError::IllegalBalanceState,
+            6041 => MarginfiError::IllegalAccountAuthorityTransfer,
+            6042 => MarginfiError::Unauthorized,
+            6043 => MarginfiError::IllegalAction,
+            6044 => MarginfiError::T22MintRequired,
+            6045 => MarginfiError::InvalidFeeAta,
+            6046 => MarginfiError::AddedStakedPoolManually,
+            6047 => MarginfiError::AssetTagMismatch,
+            6048 => MarginfiError::StakePoolValidationFailed,
+            6049 => MarginfiError::SwitchboardStalePrice,
+            6050 => MarginfiError::PythPushStalePrice,
+            6051 => MarginfiError::WrongNumberOfOracleAccounts,
+            6052 => MarginfiError::WrongOracleAccountKeys,
+            6053 => MarginfiError::PythPushWrongAccountOwner,
+            6054 => MarginfiError::StakedPythPushWrongAccountOwner,
+            6055 => MarginfiError::PythPushMismatchedFeedId,
+            6056 => MarginfiError::PythPushInsufficientVerificationLevel,
+            6057 => MarginfiError::PythPushFeedIdMustBe32Bytes,
+            6058 => MarginfiError::PythPushFeedIdNonHexCharacter,
+            6059 => MarginfiError::SwitchboardWrongAccountOwner,
+            6060 => MarginfiError::PythPushInvalidAccount,
+            6061 => MarginfiError::SwitchboardInvalidAccount,
+            6062 => MarginfiError::MathError,
+            6063 => MarginfiError::InvalidEmissionsDestinationAccount,
+            6064 => MarginfiError::SameAssetAndLiabilityBanks,
+            6065 => MarginfiError::OverliquidationAttempt,
+            6066 => MarginfiError::NoLiabilitiesInLiabilityBank,
+            6067 => MarginfiError::AssetsInLiabilityBank,
+            6068 => MarginfiError::HealthyAccount,
+            6069 => MarginfiError::ExhaustedLiability,
+            6070 => MarginfiError::TooSeverePayoff,
+            6071 => MarginfiError::TooSevereLiquidation,
+            6072 => MarginfiError::WorseHealthPostLiquidation,
+            6073 => MarginfiError::ArenaBankLimit,
+            6074 => MarginfiError::ArenaSettingCannotChange,
+            6075 => MarginfiError::BadEmodeConfig,
+            6076 => MarginfiError::PythPushInvalidWindowSize,
+            6077 => MarginfiError::InvalidFeesDestinationAccount,
+            6078 => MarginfiError::ZeroAssetPrice,
+            6079 => MarginfiError::ZeroLiabilityPrice,
+            6080 => MarginfiError::OracleMaxConfidenceExceeded,
+            6081 => MarginfiError::BankCannotClose,
+            6082 => MarginfiError::AccountAlreadyMigrated,
             _ => MarginfiError::InternalLogicError,
         }
     }
 }
+
+impl PartialEq for MarginfiError {
+    fn eq(&self, other: &Self) -> bool {
+        (*self as u32) == (*other as u32)
+    }
+}
+
+impl Eq for MarginfiError {}
 
 impl MarginfiError {
     pub fn is_oracle_error(&self) -> bool {
@@ -223,6 +327,7 @@ impl MarginfiError {
                 | MarginfiError::OracleMaxConfidenceExceeded
         )
     }
+
     pub fn is_risk_engine_rejection(&self) -> bool {
         matches!(self, MarginfiError::RiskEngineInitRejected)
     }

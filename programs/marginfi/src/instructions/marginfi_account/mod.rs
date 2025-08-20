@@ -1,4 +1,5 @@
 mod borrow;
+mod close;
 mod close_balance;
 mod deposit;
 mod emissions;
@@ -10,9 +11,9 @@ mod repay;
 mod sort_balances;
 mod transfer_account;
 mod withdraw;
-mod close;
 
 pub use borrow::*;
+pub use close::*;
 pub use close_balance::*;
 pub use deposit::*;
 pub use emissions::*;
@@ -24,4 +25,3 @@ pub use repay::*;
 pub use sort_balances::*;
 pub use transfer_account::*;
 pub use withdraw::*;
-pub use close::*;

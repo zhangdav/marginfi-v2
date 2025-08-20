@@ -33,6 +33,20 @@ macro_rules! check {
     };
 }
 
+#[macro_export]
+macro_rules! bank_seed {
+    ($vault_type: expr, $bank_pk: expr) => {
+        &[$vault_type.get_seed(), &$bank_pk.to_bytes()] as &[&[u8]]
+    };
+}
+
+#[macro_export]
+macro_rules! bank_authority_seed {
+    ($vault_type: expr, $bank_pk: expr) => {
+        &[$vault_type.get_authority_seed(), &$bank_pk.to_bytes()] as &[&[u8]]
+    };
+}
+
 // Check the memory size of the structure
 #[macro_export]
 macro_rules! assert_struct_size {
@@ -112,6 +126,24 @@ macro_rules! check_eq {
                 $left,
                 $right
             );
+            return Err(err_code.into());
+        }
+    };
+
+    ($left:expr, $right:expr, $err:expr, $($arg:tt)+) => {
+        if $left != $right {
+            let err_code: $crate::errors::MarginfiError = $err;
+            #[cfg(not(feature = "test-bpf"))]
+            anchor_lang::prelude::msg!(
+                "Error \"{}\" thrown at {}:{}: left = {:?}, right = {:?}",
+                err_code,
+                file!(),
+                line!(),
+                $left,
+                $right
+            );
+            #[cfg(not(feature = "test-bpf"))]
+            anchor_lang::prelude::msg!($($arg)+);
             return Err(err_code.into());
         }
     };

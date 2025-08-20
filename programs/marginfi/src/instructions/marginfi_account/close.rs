@@ -1,11 +1,8 @@
-use anchor_lang::prelude::*;
 use crate::{
-    check,
-    state::marginfi_account::MarginfiAccount,
-    prelude::*,
-    errors::MarginfiError,
+    check, errors::MarginfiError, prelude::*, state::marginfi_account::MarginfiAccount,
     MarginfiResult,
 };
+use anchor_lang::prelude::*;
 
 pub fn close_account(ctx: Context<MarginfiAccountClose>) -> MarginfiResult {
     let marginfi_account = &ctx.accounts.marginfi_account.load()?;

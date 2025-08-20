@@ -57,7 +57,7 @@ impl EmodeSettings {
             // The liquidation mortgage ratio cannot be higher than 2 (200%) - a reasonable upper limit is reserved
             check!(
                 asset_maint_w <= (I80F48::ONE + I80F48::ONE),
-                MarginfiError::InvalidConfig
+                MarginfiError::BadEmodeConfig
             );
             // The maintenance mortgage rate must be ≥ the initial mortgage rate (otherwise the user will be liquidated as soon as the loan is completed)
             check!(asset_maint_w >= asset_init_w, MarginfiError::BadEmodeConfig);
@@ -88,15 +88,6 @@ impl EmodeSettings {
     // Check whether the EMODE_ON flag is set, that is, whether the current emode is enabled
     pub fn is_enabled(&self) -> bool {
         self.flags & EMODE_ON != 0
-    }
-
-    // Enable/disable emode function
-    pub fn set_emode_enabled(&mut self, enabled: bool) {
-        if enabled {
-            self.flags |= EMODE_ON;
-        } else {
-            self.flags &= !EMODE_ON;
-        }
     }
 
     /// Sets EMODE on flag if configuration has any entries, removes the flag if it has no entries.
