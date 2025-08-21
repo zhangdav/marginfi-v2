@@ -1,2 +1,2 @@
 [env]
-SBF_OUT_DIR = "/Users/zhangdavid/marginfi/target/deploy"
+BPF_OUT_DIR = "/Users/zhangdavid/marginfi-v2/target/deploy"

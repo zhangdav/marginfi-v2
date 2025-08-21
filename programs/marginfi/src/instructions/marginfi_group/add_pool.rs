@@ -72,7 +72,7 @@ pub fn lending_pool_add_bank(
 
     log_pool_info(&bank);
 
-    let mut group = ctx.accounts.marginfi_group.load_init()?;
+    let mut group = ctx.accounts.marginfi_group.load_mut()?;
     group.add_bank()?;
 
     bank.config.validate()?;

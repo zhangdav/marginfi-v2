@@ -46,3 +46,4 @@ solana-cli-output = { workspace = true }
 solana-program-test = { workspace = true }
 solana-sdk = { workspace = true }
 fixtures = { workspace = true, package = "test-utilities" }
+test-case = { workspace = true }

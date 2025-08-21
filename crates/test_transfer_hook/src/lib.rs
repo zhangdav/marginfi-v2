@@ -47,8 +47,7 @@ pub fn process_execute(
     _program_id: &Pubkey,
     accounts: &[AccountInfo],
     _amount: u64,
-)
--> ProgramResult {
+) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
 
     let _source_account_info = next_account_info(account_info_iter)?;
@@ -67,8 +66,7 @@ pub fn process_initialize_extra_account_meta_list(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     extra_account_metas: &[ExtraAccountMeta],
-)
--> ProgramResult {
+) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
 
     let extra_account_metas_info = next_account_info(account_info_iter)?;
@@ -136,8 +134,7 @@ pub fn process_update_extra_account_meta_list(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     extra_account_metas: &[ExtraAccountMeta],
-)
--> ProgramResult {
+) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
 
     let extra_account_metas_info = next_account_info(account_info_iter)?;
@@ -215,5 +212,3 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], input: &[u8]) -> P
         }
     }
 }
-
-

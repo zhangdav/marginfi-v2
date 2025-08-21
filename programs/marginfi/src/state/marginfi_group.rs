@@ -591,10 +591,10 @@ impl Bank {
         );
         set_if_some!(self.config.oracle_max_age, config.oracle_max_age);
 
-        if let Some(flag) = config.permission_bad_debt_settlement {
+        if let Some(flag) = config.permissionless_bad_debt_settlement {
             msg!(
                 "setting bad debt settlement: {:?}",
-                config.permission_bad_debt_settlement
+                config.permissionless_bad_debt_settlement
             );
             self.update_flag(flag, PERMISSIONLESS_BAD_DEBT_SETTLEMENT_FLAG);
         }
@@ -1222,9 +1222,11 @@ pub struct BankConfigOpt {
 
     pub total_asset_value_init_limit: Option<u64>,
 
+    pub oracle_max_confidence: Option<u32>,
+
     pub oracle_max_age: Option<u16>,
 
-    pub permission_bad_debt_settlement: Option<bool>,
+    pub permissionless_bad_debt_settlement: Option<bool>,
 
     pub freeze_settings: Option<bool>,
 }
