@@ -101,7 +101,7 @@ impl<'info> TransferToNewAccount<'info> {
         CpiContext::new(
             self.system_program.to_account_info(),
             anchor_lang::system_program::Transfer {
-                from: self.global_fee_wallet.to_account_info(),
+                from: self.authority.to_account_info(),
                 to: self.global_fee_wallet.to_account_info(),
             },
         )
