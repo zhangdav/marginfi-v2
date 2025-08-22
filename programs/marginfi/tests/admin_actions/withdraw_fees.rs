@@ -153,7 +153,7 @@ async fn marginfi_group_withdraw_fees_permissionless(bank_mint: BankMint) -> any
     let mut test_f = TestFixture::new(Some(TestSettings::all_banks_payer_not_admin())).await;
 
     let bank_f = test_f.banks.get_mut(&bank_mint).unwrap();
-    
+
     let fee_vault_balance = 750;
 
     // Mint `fee_vault_balance` USDC to the fee vault
@@ -167,7 +167,7 @@ async fn marginfi_group_withdraw_fees_permissionless(bank_mint: BankMint) -> any
 
     // Create a receiving account and try to withdraw `fee_vault_balance` USDC from the fee vault
     let receiving_account = bank_f.mint.create_empty_token_account().await;
-    
+
     // Withdrawal fails because the destination account is not set for the bank
     let res = bank_f
         .try_withdraw_fees_permissionless(&receiving_account, fee_vault_balance)
