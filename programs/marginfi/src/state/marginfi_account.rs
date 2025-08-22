@@ -430,6 +430,19 @@ impl LendingAccount {
     }
 }
 
+#[cfg(any(feature = "test", feature = "client"))]
+impl LendingAccount {
+    pub fn get_balance(&self, bank_pk: &Pubkey) -> Option<&Balance> {
+        self.balances
+            .iter()
+            .find(|balance| balance.is_active() && balance.bank_pk.eq(bank_pk))
+    }
+
+    pub fn get_active_balances_iter(&self) -> impl Iterator<Item = &Balance> {
+        self.balances.iter().filter(|b| b.is_active())
+    }
+}
+
 assert_struct_size!(Balance, 104);
 assert_struct_align!(Balance, 8);
 #[repr(C)]
