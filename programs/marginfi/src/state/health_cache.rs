@@ -104,6 +104,10 @@ impl HealthCache {
         }
     }
 
+    pub fn is_healthy(&self) -> bool {
+        self.flags & HEALTHY != 0
+    }
+
     pub fn set_healthy(&mut self, healthy: bool) {
         if healthy {
             self.flags |= HEALTHY;
@@ -118,5 +122,9 @@ impl HealthCache {
         } else {
             self.flags &= !ORACLE_OK;
         }
+    }
+
+    pub fn is_engine_ok(&self) -> bool {
+        self.flags & ENGINE_OK != 0
     }
 }
