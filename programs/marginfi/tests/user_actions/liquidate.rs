@@ -253,3 +253,184 @@ async fn marginfi_account_liquidation_success(
 
     Ok(())
 }
+
+#[tokio::test]
+async fn marginfi_account_liquidation_success_many_balances() -> anyhow::Result<()> {
+    let test_f = TestFixture::new(Some(TestSettings::many_banks_10())).await;
+
+    let usdc_bank_f = test_f.get_bank(&BankMint::Usdc);
+    let sol_bank_f = test_f.get_bank(&BankMint::Sol);
+    let sol_eq_bank_f = test_f.get_bank(&BankMint::SolEquivalent);
+    let sol_eq1_bank_f = test_f.get_bank(&BankMint::SolEquivalent1);
+    let sol_eq2_bank_f = test_f.get_bank(&BankMint::SolEquivalent2);
+    let sol_eq3_bank_f = test_f.get_bank(&BankMint::SolEquivalent3);
+    let sol_eq4_bank_f = test_f.get_bank(&BankMint::SolEquivalent4);
+    let sol_eq5_bank_f = test_f.get_bank(&BankMint::SolEquivalent5);
+    let sol_eq6_bank_f = test_f.get_bank(&BankMint::SolEquivalent6);
+    let sol_eq7_bank_f = test_f.get_bank(&BankMint::SolEquivalent7);
+
+    let lender_mfi_account_f = test_f.create_marginfi_account().await;
+    let lender_token_account_usdc = test_f
+        .usdc_mint
+        .create_token_account_and_mint_to(2_000)
+        .await;
+    lender_mfi_account_f
+        .try_bank_deposit(lender_token_account_usdc.key, usdc_bank_f, 2_000, None)
+        .await?;
+
+    let borrower_mfi_account_f = test_f.create_marginfi_account().await;
+    let borrower_token_account_sol = test_f.sol_mint.create_token_account_and_mint_to(100).await;
+    let borrower_token_account_usdc = test_f.usdc_mint.create_empty_token_account().await;
+    let borrower_token_account_sol_eq = test_f
+        .sol_equivalent_mint
+        .create_token_account_and_mint_to(5000)
+        .await;
+
+    // Borrower deposits 100 SOL worth of $1000
+    borrower_mfi_account_f
+        .try_bank_deposit(borrower_token_account_sol.key, sol_bank_f, 100, None)
+        .await?;
+
+    // Borrower borrows $999
+    borrower_mfi_account_f
+        .try_bank_borrow(borrower_token_account_usdc.key, usdc_bank_f, 999)
+        .await?;
+
+    borrower_mfi_account_f
+        .try_bank_deposit(borrower_token_account_sol_eq.key, sol_eq_bank_f, 0, None)
+        .await?;
+    borrower_mfi_account_f
+        .try_bank_deposit(borrower_token_account_sol_eq.key, sol_eq1_bank_f, 0, None)
+        .await?;
+    borrower_mfi_account_f
+        .try_bank_deposit(borrower_token_account_sol_eq.key, sol_eq2_bank_f, 0, None)
+        .await?;
+    borrower_mfi_account_f
+        .try_bank_deposit(borrower_token_account_sol_eq.key, sol_eq3_bank_f, 0, None)
+        .await?;
+    borrower_mfi_account_f
+        .try_bank_deposit(borrower_token_account_sol_eq.key, sol_eq4_bank_f, 0, None)
+        .await?;
+    borrower_mfi_account_f
+        .try_bank_deposit(borrower_token_account_sol_eq.key, sol_eq5_bank_f, 0, None)
+        .await?;
+    borrower_mfi_account_f
+        .try_bank_deposit(borrower_token_account_sol_eq.key, sol_eq6_bank_f, 0, None)
+        .await?;
+    borrower_mfi_account_f
+        .try_bank_deposit(borrower_token_account_sol_eq.key, sol_eq7_bank_f, 0, None)
+        .await?;
+
+    // Synthetically bring down the borrower account health by reducing the asset weights of the SOL bank
+    sol_bank_f
+        .update_config(
+            BankConfigOpt {
+                asset_weight_init: Some(I80F48!(0.25).into()),
+                asset_weight_maint: Some(I80F48!(0.5).into()),
+                ..Default::default()
+            },
+            None,
+        )
+        .await?;
+
+    lender_mfi_account_f
+        .try_liquidate(&borrower_mfi_account_f, sol_bank_f, 1, usdc_bank_f)
+        .await?;
+
+    // Checks
+    let sol_bank: Bank = sol_bank_f.load().await;
+    let usdc_bank: Bank = usdc_bank_f.load().await;
+
+    let depositor_ma = lender_mfi_account_f.load().await;
+    let borrower_ma = borrower_mfi_account_f.load().await;
+
+    // Due to balances sorting, SOL and USDC may be not at indices 0 and 1, respectively -> determine them first
+    let sol_index = depositor_ma
+        .lending_account
+        .balances
+        .iter()
+        .position(|b| b.is_active() && b.bank_pk == sol_bank_f.key)
+        .unwrap();
+    let usdc_index = depositor_ma
+        .lending_account
+        .balances
+        .iter()
+        .position(|b| b.is_active() && b.bank_pk == usdc_bank_f.key)
+        .unwrap();
+
+    // Depositors should have 1 SOL
+    assert_eq!(
+        sol_bank
+            .get_asset_amount(
+                depositor_ma.lending_account.balances[sol_index]
+                    .asset_shares
+                    .into()
+            )
+            .unwrap(),
+        I80F48::from(native!(1, "SOL"))
+    );
+
+    // Depositors should have 1990.25 USDC
+    assert_eq_noise!(
+        usdc_bank
+            .get_asset_amount(
+                depositor_ma.lending_account.balances[usdc_index]
+                    .asset_shares
+                    .into()
+            )
+            .unwrap(),
+        I80F48::from(native!(1990.25, "USDC", f64)),
+        native!(0.00001, "USDC", f64)
+    );
+
+    let sol_index = borrower_ma
+        .lending_account
+        .balances
+        .iter()
+        .position(|b| b.is_active() && b.bank_pk == sol_bank_f.key)
+        .unwrap();
+    let usdc_index = borrower_ma
+        .lending_account
+        .balances
+        .iter()
+        .position(|b| b.is_active() && b.bank_pk == usdc_bank_f.key)
+        .unwrap();
+
+    // Borrower should have 99 SOL
+    assert_eq!(
+        sol_bank
+            .get_asset_amount(
+                borrower_ma.lending_account.balances[sol_index]
+                    .asset_shares
+                    .into()
+            )
+            .unwrap(),
+        I80F48::from(native!(99, "SOL"))
+    );
+
+    // Borrower should have 989.50 USDC
+    assert_eq_noise!(
+        usdc_bank
+            .get_liability_amount(
+                borrower_ma.lending_account.balances[usdc_index]
+                    .liability_shares
+                    .into()
+            )
+            .unwrap(),
+        I80F48::from(native!(989.50, "USDC", f64)),
+        native!(0.00001, "USDC", f64)
+    );
+
+    // Check insurance fund fee
+    let insurance_fund_usdc = usdc_bank_f
+        .get_vault_token_account(BankVaultType::Insurance)
+        .await;
+
+    assert_eq_noise!(
+        insurance_fund_usdc.balance().await as i64,
+        native!(0.25, "USDC", f64) as i64,
+        1
+    );
+
+    Ok(())
+}
