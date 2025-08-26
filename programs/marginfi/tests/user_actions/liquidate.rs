@@ -539,3 +539,81 @@ async fn marginfi_account_liquidation_failure_liquidation_too_severe() -> anyhow
 
     Ok(())
 }
+
+#[tokio::test]
+async fn marginfi_account_liquidation_failure_liquidator_no_collateral() -> anyhow::Result<()> {
+    let test_f = TestFixture::new(Some(TestSettings {
+        banks: vec![
+            TestBankSetting {
+                mint: BankMint::Usdc,
+                config: Some(BankConfig {
+                    liability_weight_init: I80F48!(1.2).into(),
+                    liability_weight_maint: I80F48!(1.1).into(),
+                    ..*DEFAULT_USDC_TEST_BANK_CONFIG
+                }),
+            },
+            TestBankSetting {
+                mint: BankMint::Sol,
+                config: None,
+            },
+            TestBankSetting {
+                mint: BankMint::SolEquivalent,
+                config: None,
+            },
+        ],
+        protocol_fees: false,
+    }))
+    .await;
+
+    let usdc_bank_f = test_f.get_bank(&BankMint::Usdc);
+    let sol_bank_f = test_f.get_bank(&BankMint::Sol);
+    let sol_eq_bank_f = test_f.get_bank(&BankMint::SolEquivalent);
+
+    let lender_mfi_account_f = test_f.create_marginfi_account().await;
+    let lender_token_account_usdc = test_f.usdc_mint.create_token_account_and_mint_to(200).await;
+    lender_mfi_account_f
+        .try_bank_deposit(lender_token_account_usdc.key, usdc_bank_f, 200, None)
+        .await?;
+
+    let borrower_mfi_account_f = test_f.create_marginfi_account().await;
+    let borrower_token_account_sol = test_f.sol_mint.create_token_account_and_mint_to(100).await;
+    let borrower_token_account_sol_eq = test_f
+        .sol_equivalent_mint
+        .create_token_account_and_mint_to(100)
+        .await;
+    let borrower_token_account_usdc = test_f.usdc_mint.create_empty_token_account().await;
+    borrower_mfi_account_f
+        .try_bank_deposit(borrower_token_account_sol.key, sol_bank_f, 10, None)
+        .await?;
+    borrower_mfi_account_f
+        .try_bank_deposit(borrower_token_account_sol_eq.key, sol_eq_bank_f, 1, None)
+        .await?;
+    borrower_mfi_account_f
+        .try_bank_borrow(borrower_token_account_usdc.key, usdc_bank_f, 60)
+        .await?;
+
+    sol_bank_f
+        .update_config(
+            BankConfigOpt {
+                asset_weight_init: Some(I80F48!(0.25).into()),
+                asset_weight_maint: Some(I80F48!(0.3).into()),
+                ..Default::default()
+            },
+            None,
+        )
+        .await?;
+
+    let res = lender_mfi_account_f
+        .try_liquidate(&borrower_mfi_account_f, sol_eq_bank_f, 2, usdc_bank_f)
+        .await;
+
+    assert_custom_error!(res.unwrap_err(), MarginfiError::OverliquidationAttempt);
+
+    let res = lender_mfi_account_f
+        .try_liquidate(&borrower_mfi_account_f, sol_bank_f, 1, usdc_bank_f)
+        .await;
+
+    assert!(res.is_ok());
+
+    Ok(())
+}
