@@ -111,3 +111,423 @@ async fn flashloan_success_3op() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn flashloan_fail_account_health() -> anyhow::Result<()> {
+    let test_f = TestFixture::new(Some(TestSettings::all_banks_payer_not_admin())).await;
+
+    let sol_bank = test_f.get_bank(&BankMint::Sol);
+
+    let lender_mfi_account_ = test_f.create_marginfi_account().await;
+    let lender_token_account_f_sol = test_f
+        .sol_mint
+        .create_token_account_and_mint_to(1_000)
+        .await;
+    lender_mfi_account_
+        .try_bank_deposit(lender_token_account_f_sol.key, sol_bank, 1_000, None)
+        .await?;
+
+    let borrower_mfi_account_f = test_f.create_marginfi_account().await;
+
+    let borrower_token_account_f_sol = test_f.sol_mint.create_empty_token_account().await;
+
+    let borrow_ix = borrower_mfi_account_f
+        .make_bank_borrow_ix(borrower_token_account_f_sol.key, sol_bank, 1_000)
+        .await;
+
+    let flash_loan_result = borrower_mfi_account_f
+        .try_flashloan(vec![borrow_ix], vec![], vec![sol_bank.key], None)
+        .await;
+
+    assert_custom_error!(
+        flash_loan_result.unwrap_err(),
+        MarginfiError::RiskEngineInitRejected
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn flashloan_ok_missing_flag() -> anyhow::Result<()> {
+    let test_f = TestFixture::new(Some(TestSettings::all_banks_payer_not_admin())).await;
+
+    let sol_bank = test_f.get_bank(&BankMint::Sol);
+
+    let lender_mfi_account_f = test_f.create_marginfi_account().await;
+    let lender_token_account_f_sol = test_f
+        .sol_mint
+        .create_token_account_and_mint_to(1_000)
+        .await;
+    lender_mfi_account_f
+        .try_bank_deposit(lender_token_account_f_sol.key, sol_bank, 1_000, None)
+        .await?;
+
+    let borrower_mfi_account_f = test_f.create_marginfi_account().await;
+
+    let borrower_token_account_f_sol = test_f.sol_mint.create_empty_token_account().await;
+
+    let borrow_ix = borrower_mfi_account_f
+        .make_bank_borrow_ix(borrower_token_account_f_sol.key, sol_bank, 1_000)
+        .await;
+
+    let repay_ix = borrower_mfi_account_f
+        .make_bank_repay_ix(
+            borrower_token_account_f_sol.key,
+            sol_bank,
+            1_000,
+            Some(true),
+        )
+        .await;
+
+    let flash_loan_result = borrower_mfi_account_f
+        .try_flashloan(vec![borrow_ix, repay_ix], vec![], vec![], None)
+        .await;
+
+    assert!(flash_loan_result.is_ok());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn flashloan_fail_missing_fe_ix() -> anyhow::Result<()> {
+    let test_f = TestFixture::new(Some(TestSettings::all_banks_payer_not_admin())).await;
+
+    let sol_bank = test_f.get_bank(&BankMint::Sol);
+
+    let lender_mfi_account_f = test_f.create_marginfi_account().await;
+    let lender_token_account_f_sol = test_f
+        .sol_mint
+        .create_token_account_and_mint_to(1_000)
+        .await;
+    lender_mfi_account_f
+        .try_bank_deposit(lender_token_account_f_sol.key, sol_bank, 1_000, None)
+        .await?;
+
+    let borrower_mfi_account_f = test_f.create_marginfi_account().await;
+
+    let borrower_token_account_f_sol = test_f.sol_mint.create_empty_token_account().await;
+
+    let borrow_ix = borrower_mfi_account_f
+        .make_bank_borrow_ix(borrower_token_account_f_sol.key, sol_bank, 1_000)
+        .await;
+
+    let repay_ix = borrower_mfi_account_f
+        .make_bank_repay_ix(
+            borrower_token_account_f_sol.key,
+            sol_bank,
+            1_000,
+            Some(true),
+        )
+        .await;
+
+    let mut ixs = vec![borrow_ix, repay_ix];
+
+    let start_ix = borrower_mfi_account_f
+        .make_lending_account_start_flashloan_ix(ixs.len() as u64)
+        .await;
+
+    ixs.insert(0, start_ix);
+
+    let ctx = test_f.context.borrow_mut();
+
+    let tx = Transaction::new_signed_with_payer(
+        &ixs,
+        Some(&ctx.payer.pubkey().clone()),
+        &[&ctx.payer],
+        ctx.last_blockhash,
+    );
+
+    let res = ctx.banks_client.process_transaction(tx).await;
+
+    assert_custom_error!(res.unwrap_err(), MarginfiError::IllegalFlashloan);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn flashloan_fail_missing_invalid_sysvar_ixs() -> anyhow::Result<()> {
+    let test_f = TestFixture::new(Some(TestSettings::all_banks_payer_not_admin())).await;
+
+    let sol_bank = test_f.get_bank(&BankMint::Sol);
+
+    let lender_mfi_account_f = test_f.create_marginfi_account().await;
+    let lender_token_account_f_sol = test_f
+        .sol_mint
+        .create_token_account_and_mint_to(1_000)
+        .await;
+    lender_mfi_account_f
+        .try_bank_deposit(lender_token_account_f_sol.key, sol_bank, 1_000, None)
+        .await?;
+
+    let borrower_mfi_account_f = test_f.create_marginfi_account().await;
+
+    let borrower_token_account_f_sol = test_f.sol_mint.create_empty_token_account().await;
+
+    let borrow_ix = borrower_mfi_account_f
+        .make_bank_borrow_ix(borrower_token_account_f_sol.key, sol_bank, 1_000)
+        .await;
+
+    let repay_ix = borrower_mfi_account_f
+        .make_bank_repay_ix(
+            borrower_token_account_f_sol.key,
+            sol_bank,
+            1_000,
+            Some(true),
+        )
+        .await;
+
+    let mut ixs = vec![borrow_ix, repay_ix];
+
+    let start_ix = Instruction {
+        program_id: marginfi::id(),
+        accounts: marginfi::accounts::LendingAccountStartFlashloan {
+            marginfi_account: borrower_mfi_account_f.key,
+            authority: test_f.context.borrow().payer.pubkey(),
+            ixs_sysvar: Pubkey::default(),
+        }
+        .to_account_metas(Some(true)),
+        data: marginfi::instruction::LendingAccountStartFlashloan {
+            end_index: ixs.len() as u64 + 1,
+        }
+        .data(),
+    };
+
+    let end_ix = borrower_mfi_account_f
+        .make_lending_account_end_flashloan_ix(vec![], vec![])
+        .await;
+
+    ixs.insert(0, start_ix);
+    ixs.push(end_ix);
+
+    let ctx = test_f.context.borrow_mut();
+
+    let tx = Transaction::new_signed_with_payer(
+        &ixs,
+        Some(&ctx.payer.pubkey().clone()),
+        &[&ctx.payer],
+        ctx.last_blockhash,
+    );
+
+    let res: Result<(), BanksClientError> = ctx.banks_client.process_transaction(tx).await;
+
+    assert!(res.is_err());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn flashloan_fail_invalid_end_fl_order() -> anyhow::Result<()> {
+    let test_f = TestFixture::new(Some(TestSettings::all_banks_payer_not_admin())).await;
+
+    let sol_bank = test_f.get_bank(&BankMint::Sol);
+
+    let lender_mfi_account_f = test_f.create_marginfi_account().await;
+    let lender_token_account_f_sol = test_f
+        .sol_mint
+        .create_token_account_and_mint_to(1_000)
+        .await;
+    lender_mfi_account_f
+        .try_bank_deposit(lender_token_account_f_sol.key, sol_bank, 1_000, None)
+        .await?;
+
+    let borrower_mfi_account_f = test_f.create_marginfi_account().await;
+
+    let borrower_token_account_f_sol = test_f.sol_mint.create_empty_token_account().await;
+
+    let borrow_ix = borrower_mfi_account_f
+        .make_bank_borrow_ix(borrower_token_account_f_sol.key, sol_bank, 1_000)
+        .await;
+
+    let mut ixs = vec![borrow_ix];
+
+    let start_ix = borrower_mfi_account_f
+        .make_lending_account_start_flashloan_ix(ixs.len() as u64)
+        .await;
+
+    let end_ix = borrower_mfi_account_f
+        .make_lending_account_end_flashloan_ix(vec![], vec![])
+        .await;
+
+    ixs.insert(0, start_ix);
+    ixs.insert(0, end_ix);
+
+    let ctx = test_f.context.borrow_mut();
+
+    let tx = Transaction::new_signed_with_payer(
+        &ixs,
+        Some(&ctx.payer.pubkey().clone()),
+        &[&ctx.payer],
+        ctx.last_blockhash,
+    );
+
+    let res = ctx.banks_client.process_transaction(tx).await;
+
+    assert_custom_error!(res.unwrap_err(), MarginfiError::IllegalFlashloan);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn flashloan_fail_invalid_end_fl_different_m_account() -> anyhow::Result<()> {
+    let test_f = TestFixture::new(Some(TestSettings::all_banks_payer_not_admin())).await;
+
+    let sol_bank = test_f.get_bank(&BankMint::Sol);
+
+    let lender_mfi_account_f = test_f.create_marginfi_account().await;
+    let lender_token_account_f_sol = test_f
+        .sol_mint
+        .create_token_account_and_mint_to(1_000)
+        .await;
+    lender_mfi_account_f
+        .try_bank_deposit(lender_token_account_f_sol.key, sol_bank, 1_000, None)
+        .await?;
+
+    let borrower_mfi_account_f = test_f.create_marginfi_account().await;
+
+    let borrower_token_account_f_sol = test_f.sol_mint.create_empty_token_account().await;
+
+    let borrow_ix = borrower_mfi_account_f
+        .make_bank_borrow_ix(borrower_token_account_f_sol.key, sol_bank, 1_000)
+        .await;
+
+    let mut ixs = vec![borrow_ix];
+
+    let start_ix = borrower_mfi_account_f
+        .make_lending_account_start_flashloan_ix(ixs.len() as u64 + 1)
+        .await;
+
+    let end_ix = lender_mfi_account_f
+        .make_lending_account_end_flashloan_ix(vec![], vec![])
+        .await;
+
+    ixs.insert(0, start_ix);
+    ixs.push(end_ix);
+
+    let ctx = test_f.context.borrow_mut();
+
+    let tx = Transaction::new_signed_with_payer(
+        &ixs,
+        Some(&ctx.payer.pubkey().clone()),
+        &[&ctx.payer],
+        ctx.last_blockhash,
+    );
+
+    let res = ctx.banks_client.process_transaction(tx).await;
+
+    assert_custom_error!(res.unwrap_err(), MarginfiError::IllegalFlashloan);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn flashloan_fail_already_in_flashloan() -> anyhow::Result<()> {
+    let test_f = TestFixture::new(Some(TestSettings::all_banks_payer_not_admin())).await;
+
+    let sol_bank = test_f.get_bank(&BankMint::Sol);
+
+    let lender_mfi_account_f = test_f.create_marginfi_account().await;
+    let lender_token_account_f_sol = test_f
+        .sol_mint
+        .create_token_account_and_mint_to(1_000)
+        .await;
+    lender_mfi_account_f
+        .try_bank_deposit(lender_token_account_f_sol.key, sol_bank, 1_000, None)
+        .await?;
+
+    let borrower_mfi_account_f = test_f.create_marginfi_account().await;
+
+    let borrower_token_account_f_sol = test_f.sol_mint.create_empty_token_account().await;
+
+    let borrow_ix = borrower_mfi_account_f
+        .make_bank_borrow_ix(borrower_token_account_f_sol.key, sol_bank, 1_000)
+        .await;
+
+    let mut ixs = vec![borrow_ix];
+
+    let start_ix = borrower_mfi_account_f
+        .make_lending_account_start_flashloan_ix(ixs.len() as u64 + 2)
+        .await;
+
+    let end_ix = borrower_mfi_account_f
+        .make_lending_account_end_flashloan_ix(vec![], vec![])
+        .await;
+
+    ixs.insert(0, start_ix.clone());
+    ixs.insert(0, start_ix.clone());
+    ixs.push(end_ix);
+
+    let ctx = test_f.context.borrow_mut();
+
+    let tx = Transaction::new_signed_with_payer(
+        &ixs,
+        Some(&ctx.payer.pubkey().clone()),
+        &[&ctx.payer],
+        ctx.last_blockhash,
+    );
+
+    let res = ctx.banks_client.process_transaction(tx).await;
+
+    assert_custom_error!(res.unwrap_err(), MarginfiError::IllegalFlashloan);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn flashloan_fail_account_transfer_during_flashloan() -> anyhow::Result<()> {
+    let test_f = TestFixture::new(Some(TestSettings::all_banks_payer_not_admin())).await;
+
+    let sol_bank = test_f.get_bank(&BankMint::Sol);
+
+    let lender_mfi_account_f = test_f.create_marginfi_account().await;
+    let lender_token_account_f_sol = test_f
+        .sol_mint
+        .create_token_account_and_mint_to(1_000)
+        .await;
+    lender_mfi_account_f
+        .try_bank_deposit(lender_token_account_f_sol.key, sol_bank, 1_000, None)
+        .await?;
+
+    let borrower_mfi_account_f = test_f.create_marginfi_account().await;
+
+    let borrower_token_account_f_sol = test_f.sol_mint.create_empty_token_account().await;
+
+    let borrow_ix = borrower_mfi_account_f
+        .make_bank_borrow_ix(borrower_token_account_f_sol.key, sol_bank, 1_000)
+        .await;
+
+    let new_authority = Keypair::new();
+    let new_account = Keypair::new();
+
+    let account = borrower_mfi_account_f.load().await;
+
+    let transfer_account_ix = Instruction {
+        program_id: marginfi::id(),
+        accounts: marginfi::accounts::TransferToNewAccount {
+            old_marginfi_account: borrower_mfi_account_f.key,
+            new_marginfi_account: new_account.pubkey(),
+            group: account.group,
+            authority: test_f.payer(),
+            new_authority: new_authority.pubkey(),
+            global_fee_wallet: test_f.marginfi_group.fee_wallet,
+            system_program: system_program::ID,
+        }
+        .to_account_metas(None),
+        data: marginfi::instruction::TransferToNewAccount {}.data(),
+    };
+
+    let flash_loan_result = borrower_mfi_account_f
+        .try_flashloan(
+            vec![borrow_ix, transfer_account_ix],
+            vec![],
+            vec![sol_bank.key],
+            Some(&new_account),
+        )
+        .await;
+
+    assert_custom_error!(
+        flash_loan_result.unwrap_err(),
+        MarginfiError::AccountInFlashloan
+    );
+
+    Ok(())
+}

@@ -1,7 +1,7 @@
 mod borrow;
 mod create_account;
 mod deposit;
+mod flash_loan;
 mod liquidate;
 mod repay;
 mod withdraw;
-mod flash_loan;
