@@ -490,3 +490,52 @@ async fn marginfi_account_liquidation_failure_liquidatee_not_unhealthy() -> anyh
 
     Ok(())
 }
+
+#[tokio::test]
+async fn marginfi_account_liquidation_failure_liquidation_too_severe() -> anyhow::Result<()> {
+    let test_f = TestFixture::new(Some(TestSettings::all_banks_payer_not_admin())).await;
+
+    let usdc_bank_f = test_f.get_bank(&BankMint::Usdc);
+    let sol_bank_f = test_f.get_bank(&BankMint::Sol);
+
+    let lender_mfi_account_f = test_f.create_marginfi_account().await;
+    let lender_token_account_usdc = test_f.usdc_mint.create_token_account_and_mint_to(200).await;
+    lender_mfi_account_f
+        .try_bank_deposit(lender_token_account_usdc.key, usdc_bank_f, 200, None)
+        .await?;
+
+    let borrower_mfi_account_f = test_f.create_marginfi_account().await;
+    let borrower_token_account_sol = test_f.sol_mint.create_token_account_and_mint_to(10).await;
+    let borrower_token_account_usdc = test_f.usdc_mint.create_empty_token_account().await;
+    borrower_mfi_account_f
+        .try_bank_deposit(borrower_token_account_sol.key, sol_bank_f, 10, None)
+        .await?;
+    borrower_mfi_account_f
+        .try_bank_borrow(borrower_token_account_usdc.key, usdc_bank_f, 61)
+        .await?;
+
+    sol_bank_f
+        .update_config(
+            BankConfigOpt {
+                asset_weight_init: Some(I80F48!(0.25).into()),
+                asset_weight_maint: Some(I80F48!(0.5).into()),
+                ..Default::default()
+            },
+            None,
+        )
+        .await?;
+
+    let res = lender_mfi_account_f
+        .try_liquidate(&borrower_mfi_account_f, sol_bank_f, 10, usdc_bank_f)
+        .await;
+
+    assert_custom_error!(res.unwrap_err(), MarginfiError::ExhaustedLiability);
+
+    let res = lender_mfi_account_f
+        .try_liquidate(&borrower_mfi_account_f, sol_bank_f, 1, usdc_bank_f)
+        .await;
+
+    assert!(res.is_ok());
+
+    Ok(())
+}
