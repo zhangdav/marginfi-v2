@@ -1,9 +1,9 @@
 mod borrow;
+mod close_account;
+mod close_balance;
 mod create_account;
 mod deposit;
 mod flash_loan;
 mod liquidate;
 mod repay;
 mod withdraw;
-mod close_account;
-mod close_balance;
