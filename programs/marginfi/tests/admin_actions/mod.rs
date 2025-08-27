@@ -4,3 +4,4 @@ mod interest_accrual;
 mod setup_bank;
 mod withdraw_fees;
 mod bankruptcy_auth;
+mod bankruptcy;
