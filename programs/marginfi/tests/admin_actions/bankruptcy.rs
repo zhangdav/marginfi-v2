@@ -690,5 +690,245 @@ async fn marginfi_group_handle_bankruptcy_success_not_insured(
     collateral_mint: BankMint,
     debt_mint: BankMint,
 ) -> anyhow::Result<()> {
+    let mut test_f = TestFixture::new(Some(TestSettings::all_banks_payer_not_admin())).await;
+
+    let lp_deposit_amount = 2. * borrow_amount;
+    let lp_wallet_balance = get_max_deposit_amount_pre_fee(lp_deposit_amount);
+    let lp_mfi_account_f = test_f.create_marginfi_account().await;
+    let lp_token_account_f_sol = test_f
+        .get_bank(&debt_mint)
+        .mint
+        .create_token_account_and_mint_to(lp_wallet_balance)
+        .await;
+    lp_mfi_account_f
+        .try_bank_deposit(
+            lp_token_account_f_sol.key,
+            test_f.get_bank(&debt_mint),
+            lp_deposit_amount,
+            None,
+        )
+        .await?;
+
+    let mut user_mfi_account_f = test_f.create_marginfi_account().await;
+    let sufficient_collateral_amount = test_f
+        .get_sufficient_collateral_for_outflow(borrow_amount, &collateral_mint, &debt_mint)
+        .await;
+    let user_wallet_balance = get_max_deposit_amount_pre_fee(sufficient_collateral_amount);
+    let user_collateral_token_account_f = test_f
+        .get_bank_mut(&collateral_mint)
+        .mint
+        .create_token_account_and_mint_to(user_wallet_balance)
+        .await;
+
+    let user_debt_token_account_f = test_f
+        .get_bank_mut(&debt_mint)
+        .mint
+        .create_empty_token_account()
+        .await;
+    user_mfi_account_f
+        .try_bank_deposit(
+            user_collateral_token_account_f.key,
+            test_f.get_bank(&collateral_mint),
+            sufficient_collateral_amount,
+            None,
+        )
+        .await?;
+    user_mfi_account_f
+        .try_bank_borrow(
+            user_debt_token_account_f.key,
+            test_f.get_bank(&debt_mint),
+            borrow_amount,
+        )
+        .await?;
+
+    let collateral_bank_pk = test_f.get_bank(&collateral_mint).key;
+    user_mfi_account_f
+        .nullify_assets_for_bank(collateral_bank_pk)
+        .await?;
+
+    test_f
+        .marginfi_group
+        .try_handle_bankruptcy(test_f.get_bank(&debt_mint), &user_mfi_account_f)
+        .await?;
+
+    let debt_bank_f = test_f.get_bank(&debt_mint);
+    let user_mfi_account = user_mfi_account_f.load().await;
+    let debt_index = user_mfi_account
+        .lending_account
+        .balances
+        .iter()
+        .position(|b| b.is_active() && b.bank_pk == debt_bank_f.key)
+        .unwrap();
+
+    let user_collateral_balance = user_mfi_account.lending_account.balances[debt_index];
+
+    assert_eq!(
+        I80F48::from(user_collateral_balance.liability_shares),
+        I80F48::ZERO
+    );
+
+    let lp_mfi_account = lp_mfi_account_f.load().await;
+    let debt_bank = test_f.get_bank(&debt_mint).load().await;
+
+    let actual_post_lender_collateral_amount = debt_bank.get_asset_amount(
+        lp_mfi_account.lending_account.balances[0]
+            .asset_shares
+            .into(),
+    )?;
+
+    let borrow_amount_native = native!(
+        borrow_amount,
+        test_f.get_bank(&debt_mint).mint.mint.decimals,
+        f64
+    );
+    let borrow_amount_with_fee = borrow_amount_native
+        + debt_bank_f
+            .mint
+            .load_state()
+            .await
+            .get_extension::<TransferFeeConfig>()
+            .map(|tf| {
+                tf.calculate_inverse_epoch_fee(0, borrow_amount_native)
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
+    let expected_lender_collateral_amount = I80F48::from(
+        native!(
+            lp_deposit_amount,
+            test_f.get_bank(&debt_mint).mint.mint.decimals,
+            f64
+        ) - borrow_amount_with_fee,
+    );
+    assert_eq_noise!(
+        actual_post_lender_collateral_amount,
+        expected_lender_collateral_amount,
+        I80F48::ONE
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn marginfi_group_handle_bankruptcy_success_not_insured_3_depositors() -> anyhow::Result<()> {
+    let test_f = TestFixture::new(Some(TestSettings {
+        banks: vec![
+            TestBankSetting {
+                mint: BankMint::Usdc,
+                config: None,
+            },
+            TestBankSetting {
+                mint: BankMint::Sol,
+                config: Some(BankConfig {
+                    asset_weight_init: I80F48!(1).into(),
+                    ..*DEFAULT_SOL_TEST_BANK_CONFIG
+                }),
+            },
+        ],
+        protocol_fees: false,
+    }))
+    .await;
+
+    let usdc_bank_f = test_f.get_bank(&BankMint::Usdc);
+    let sol_bank_f = test_f.get_bank(&BankMint::Sol);
+
+    let lender_1_mfi_account_f = test_f.create_marginfi_account().await;
+    let lender_1_token_account_f = test_f
+        .usdc_mint
+        .create_token_account_and_mint_to(100_000)
+        .await;
+    lender_1_mfi_account_f
+        .try_bank_deposit(lender_1_token_account_f.key, usdc_bank_f, 100_000, None)
+        .await?;
+
+    let lender_2_mfi_account_f = test_f.create_marginfi_account().await;
+    let lender_2_token_account_f = test_f
+        .usdc_mint
+        .create_token_account_and_mint_to(100_000)
+        .await;
+
+    lender_2_mfi_account_f
+        .try_bank_deposit(lender_2_token_account_f.key, usdc_bank_f, 100_000, None)
+        .await?;
+
+    let lender_3_mfi_account_f = test_f.create_marginfi_account().await;
+    let lender_3_token_account_f = test_f
+        .usdc_mint
+        .create_token_account_and_mint_to(100_000)
+        .await;
+
+    lender_3_mfi_account_f
+        .try_bank_deposit(lender_3_token_account_f.key, usdc_bank_f, 100_000, None)
+        .await?;
+
+    let mut borrower_mfi_account_f = test_f.create_marginfi_account().await;
+    let borrower_token_account_sol = test_f
+        .sol_mint
+        .create_token_account_and_mint_to(1_001)
+        .await;
+    borrower_mfi_account_f
+        .try_bank_deposit(borrower_token_account_sol.key, sol_bank_f, 1_001, None)
+        .await?;
+
+    let borrower_token_account_usdc = test_f.usdc_mint.create_empty_token_account().await;
+    borrower_mfi_account_f
+        .try_bank_borrow(borrower_token_account_usdc.key, usdc_bank_f, 10_000)
+        .await?;
+
+    borrower_mfi_account_f
+        .nullify_assets_for_bank(sol_bank_f.key)
+        .await?;
+
+    test_f
+        .marginfi_group
+        .try_handle_bankruptcy(usdc_bank_f, &borrower_mfi_account_f)
+        .await?;
+
+    let borrower_mfi_account = borrower_mfi_account_f.load().await;
+    let borrower_usdc_balance = borrower_mfi_account.lending_account.balances[1];
+
+    assert_eq!(
+        I80F48::from(borrower_usdc_balance.liability_shares),
+        I80F48::ZERO
+    );
+
+    let lender_1_mfi_account = lender_1_mfi_account_f.load().await;
+    let lender_2_mfi_account = lender_2_mfi_account_f.load().await;
+    let lender_3_mfi_account = lender_3_mfi_account_f.load().await;
+    let usdc_bank = usdc_bank_f.load().await;
+
+    let lender_1_usdc_value = usdc_bank.get_asset_amount(
+        lender_1_mfi_account.lending_account.balances[0]
+            .asset_shares
+            .into(),
+    )?;
+    let lender_2_usdc_value = usdc_bank.get_asset_amount(
+        lender_2_mfi_account.lending_account.balances[0]
+            .asset_shares
+            .into(),
+    )?;
+    let lender_3_usdc_value = usdc_bank.get_asset_amount(
+        lender_3_mfi_account.lending_account.balances[0]
+            .asset_shares
+            .into(),
+    )?;
+
+    assert_eq_noise!(
+        lender_1_usdc_value,
+        I80F48::from(native!(96_666, "USDC")),
+        I80F48::from(native!(1, "USDC"))
+    );
+
+    assert_eq_noise!(
+        lender_2_usdc_value,
+        I80F48::from(native!(96_666, "USDC")),
+        I80F48::from(native!(1, "USDC"))
+    );
+
+    assert_eq_noise!(
+        lender_3_usdc_value,
+        I80F48::from(native!(96_666, "USDC")),
+        I80F48::from(native!(1, "USDC"))
+    );
+
     Ok(())
 }
