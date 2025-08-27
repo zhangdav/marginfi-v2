@@ -60,7 +60,7 @@ async fn marginfi_group_withdraw_fees_and_insurance_fund_as_admin_success(
         .mint_to(&bank.fee_vault, fee_vault_balance as f64)
         .await;
 
-    /// Create a receiving account and try to withdraw `fee_vault_balance` USDC from the fee vault
+    // Create a receiving account and try to withdraw `fee_vault_balance` USDC from the fee vault
     let receiving_account = bank_f.mint.create_empty_token_account().await;
     bank_f
         .try_withdraw_fees(&receiving_account, fee_vault_balance)
