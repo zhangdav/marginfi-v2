@@ -3,3 +3,5 @@ mod bank_variable_oracle_staleness;
 mod collateral_value_cap;
 mod operational_state;
 mod pyth_push;
+mod real_oracle_data;
+mod token_extensions;
