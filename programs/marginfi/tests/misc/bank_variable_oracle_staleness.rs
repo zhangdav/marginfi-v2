@@ -20,7 +20,9 @@ async fn bank_oracle_staleness_test() -> anyhow::Result<()> {
     // Make SOLE feed stale
     test_f.set_time(0);
     test_f.set_pyth_oracle_timestamp(PYTH_USDC_FEED, 120).await;
-    test_f.set_pyth_oracle_timestamp(PYTH_SOL_EQUIVALENT_FEED, 0).await;
+    test_f
+        .set_pyth_oracle_timestamp(PYTH_SOL_EQUIVALENT_FEED, 0)
+        .await;
     test_f.set_pyth_oracle_timestamp(PYTH_SOL_FEED, 120).await;
     test_f.advance_time(120).await;
 
@@ -33,7 +35,7 @@ async fn bank_oracle_staleness_test() -> anyhow::Result<()> {
     lender_mfi_account_f
         .try_bank_deposit(lender_token_account_sol.key, sol_bank, 1_000, None)
         .await?;
-        
+
     // Fund SOL borrower
     let borrower_mfi_account_f = test_f.create_marginfi_account().await;
     let borrower_token_account_f_usdc = test_f
@@ -49,12 +51,12 @@ async fn bank_oracle_staleness_test() -> anyhow::Result<()> {
     borrower_mfi_account_f
         .try_bank_deposit(borrower_token_account_f_usdc.key, usdc_bank, 500, None)
         .await?;
-    
+
     borrower_mfi_account_f
         .try_bank_deposit(borrower_token_account_f_sol_eq.key, sol_eq_bank, 50, None)
         .await?;
 
-    let res =borrower_mfi_account_f
+    let res = borrower_mfi_account_f
         .try_bank_borrow_with_nonce(borrower_token_account_f_sol.key, sol_bank, 99, 1)
         .await;
 
