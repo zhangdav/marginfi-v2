@@ -324,7 +324,7 @@ pub struct MarginfiAccount {
     pub health_cache: HealthCache,
     pub migrated_from: Pubkey,
     pub migrated_to: Pubkey,
-    pub _padding: [u64; 13],
+    pub _padding0: [u64; 13],
 }
 
 impl MarginfiAccount {
@@ -1570,7 +1570,7 @@ mod test {
             migrated_from: Pubkey::default(),
             migrated_to: Pubkey::default(),
             health_cache: HealthCache::zeroed(),
-            _padding: [0; 13],
+            _padding0: [0; 13],
         };
 
         assert!(acc.get_flag(ACCOUNT_TRANSFER_AUTHORITY_DEPRECATED));

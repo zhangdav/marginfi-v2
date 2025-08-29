@@ -47,3 +47,5 @@ solana-program-test = { workspace = true }
 solana-sdk = { workspace = true }
 fixtures = { workspace = true, package = "test-utilities" }
 test-case = { workspace = true }
+base64 = "0.21.0"
+serde_json = "1.0.115"

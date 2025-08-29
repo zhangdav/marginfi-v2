@@ -4,4 +4,5 @@ mod collateral_value_cap;
 mod operational_state;
 mod pyth_push;
 mod real_oracle_data;
+mod regression;
 mod token_extensions;
