@@ -212,3 +212,105 @@ async fn re_one_oracle_stale_failure_2() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+/// Borrower borrows USDC against SOL, if SOL oracle is stale, the liquidation should failt.
+///
+/// liquidator is using SOLE and USDC as collateral, if SOLE oracle is stale and USDC is live,
+/// liquidation should succeed as the liquidator has enough USDC collateral.
+async fn re_liquidation_fail() -> anyhow::Result<()> {
+    let test_f = TestFixture::new(Some(TestSettings {
+        banks: vec![
+            TestBankSetting {
+                mint: BankMint::Usdc,
+                ..Default::default()
+            },
+            TestBankSetting {
+                mint: BankMint::SolEquivalent,
+                ..Default::default()
+            },
+            TestBankSetting {
+                mint: BankMint::Sol,
+                config: Some(BankConfig {
+                    asset_weight_init: I80F48!(1).into(),
+                    asset_weight_maint: I80F48!(1).into(),
+                    ..*DEFAULT_SOL_TEST_BANK_CONFIG
+                }),
+            },
+        ],
+        protocol_fees: false,
+    }))
+    .await;
+
+    test_f.set_time(0);
+
+    let usdc_bank_f = test_f.get_bank(&BankMint::Usdc);
+    let sole_bank_f = test_f.get_bank(&BankMint::SolEquivalent);
+    let sol_bank_f = test_f.get_bank(&BankMint::Sol);
+
+    // Fund SOL lender
+    let lender_mfi_account_f = test_f.create_marginfi_account().await;
+    let lender_token_account_usdc = test_f
+        .usdc_mint
+        .create_token_account_and_mint_to(2_000)
+        .await;
+    lender_mfi_account_f
+        .try_bank_deposit(lender_token_account_usdc.key, usdc_bank_f, 2_000, None)
+        .await?;
+    let lender_token_account_sole = test_f
+        .sol_equivalent_mint
+        .create_token_account_and_mint_to(100)
+        .await;
+    lender_mfi_account_f
+        .try_bank_deposit(lender_token_account_sole.key, sole_bank_f, 100, None)
+        .await?;
+
+    let borrower_mfi_account_f = test_f.create_marginfi_account().await;
+    let borrower_token_account_sol = test_f.sol_mint.create_token_account_and_mint_to(100).await;
+    let borrower_token_account_usdc = test_f.usdc_mint.create_empty_token_account().await;
+
+    // Borrower deposits 100 SOL worth $1000
+    borrower_mfi_account_f
+        .try_bank_deposit(borrower_token_account_sol.key, sol_bank_f, 100, None)
+        .await?;
+
+    // Borrower borrows $999
+    borrower_mfi_account_f
+        .try_bank_borrow(borrower_token_account_usdc.key, usdc_bank_f, 999)
+        .await?;
+
+    sol_bank_f
+        .update_config(
+            BankConfigOpt {
+                asset_weight_init: Some(I80F48!(0.25).into()),
+                asset_weight_maint: Some(I80F48!(0.5).into()),
+                ..Default::default()
+            },
+            None,
+        )
+        .await?;
+
+    test_f.set_pyth_oracle_timestamp(PYTH_SOL_FEED, 0).await;
+    test_f.set_pyth_oracle_timestamp(PYTH_USDC_FEED, 120).await;
+    test_f.set_pyth_oracle_timestamp(PYTH_SOL_EQUIVALENT_FEED, 120).await;
+    test_f.advance_time(120).await;
+
+    let res = lender_mfi_account_f
+        .try_liquidate(&borrower_mfi_account_f, sol_bank_f, 1, usdc_bank_f)
+        .await;
+
+    assert!(res.is_err());
+    assert_custom_error!(res.unwrap_err(), MarginfiError::PythPushStalePrice);
+
+    test_f.set_pyth_oracle_timestamp(PYTH_SOL_FEED, 120).await;
+
+    test_f.set_pyth_oracle_timestamp(PYTH_SOL_EQUIVALENT_FEED, 0).await;
+
+    let res = lender_mfi_account_f
+        .try_liquidate(&borrower_mfi_account_f, sol_bank_f, 2, usdc_bank_f)
+        .await;
+
+    assert!(res.is_ok());
+
+    Ok(())
+}
