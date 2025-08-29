@@ -292,7 +292,9 @@ async fn re_liquidation_fail() -> anyhow::Result<()> {
 
     test_f.set_pyth_oracle_timestamp(PYTH_SOL_FEED, 0).await;
     test_f.set_pyth_oracle_timestamp(PYTH_USDC_FEED, 120).await;
-    test_f.set_pyth_oracle_timestamp(PYTH_SOL_EQUIVALENT_FEED, 120).await;
+    test_f
+        .set_pyth_oracle_timestamp(PYTH_SOL_EQUIVALENT_FEED, 120)
+        .await;
     test_f.advance_time(120).await;
 
     let res = lender_mfi_account_f
@@ -304,10 +306,106 @@ async fn re_liquidation_fail() -> anyhow::Result<()> {
 
     test_f.set_pyth_oracle_timestamp(PYTH_SOL_FEED, 120).await;
 
-    test_f.set_pyth_oracle_timestamp(PYTH_SOL_EQUIVALENT_FEED, 0).await;
+    test_f
+        .set_pyth_oracle_timestamp(PYTH_SOL_EQUIVALENT_FEED, 0)
+        .await;
 
     let res = lender_mfi_account_f
         .try_liquidate(&borrower_mfi_account_f, sol_bank_f, 2, usdc_bank_f)
+        .await;
+
+    assert!(res.is_ok());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn re_bankruptcy_fail() -> anyhow::Result<()> {
+    let mut test_f = TestFixture::new(Some(TestSettings {
+        banks: vec![
+            TestBankSetting {
+                mint: BankMint::Usdc,
+                config: None,
+            },
+            TestBankSetting {
+                mint: BankMint::Sol,
+                config: Some(BankConfig {
+                    asset_weight_init: I80F48!(1).into(),
+                    ..*DEFAULT_SOL_TEST_BANK_CONFIG
+                }),
+            },
+        ],
+        protocol_fees: false,
+    }))
+    .await;
+
+    test_f.set_time(0);
+
+    let lender_mfi_account_f = test_f.create_marginfi_account().await;
+    let lender_token_account_usdc = test_f
+        .usdc_mint
+        .create_token_account_and_mint_to(100_000)
+        .await;
+    lender_mfi_account_f
+        .try_bank_deposit(
+            lender_token_account_usdc.key,
+            test_f.get_bank(&BankMint::Usdc),
+            100_000,
+            None,
+        )
+        .await?;
+
+    let mut borrower_account = test_f.create_marginfi_account().await;
+    let borrower_deposit_account = test_f
+        .sol_mint
+        .create_token_account_and_mint_to(1_001)
+        .await;
+
+    let sol_bank_f = test_f.get_bank(&BankMint::Sol);
+    borrower_account
+        .try_bank_deposit(borrower_deposit_account.key, sol_bank_f, 1_001, None)
+        .await?;
+
+    let borrower_borrow_account = test_f.usdc_mint.create_empty_token_account().await;
+
+    borrower_account
+        .try_bank_borrow(
+            borrower_borrow_account.key,
+            test_f.get_bank(&BankMint::Usdc),
+            10_000,
+        )
+        .await?;
+
+    borrower_account
+        .nullify_assets_for_bank(sol_bank_f.key)
+        .await?;
+    {
+        let (insurance_vault, _) = test_f
+            .get_bank(&BankMint::Usdc)
+            .get_vault(BankVaultType::Insurance);
+        test_f
+            .get_bank_mut(&BankMint::Usdc)
+            .mint
+            .mint_to(&insurance_vault, 10_000)
+            .await;
+    }
+
+    test_f.set_pyth_oracle_timestamp(PYTH_USDC_FEED, 0).await;
+    test_f.advance_time(120).await;
+
+    let res = test_f
+        .marginfi_group
+        .try_handle_bankruptcy_with_nonce(test_f.get_bank(&BankMint::Usdc), &borrower_account, 1)
+        .await;
+
+    assert!(res.is_err());
+    assert_custom_error!(res.unwrap_err(), MarginfiError::PythPushStalePrice);
+
+    test_f.set_pyth_oracle_timestamp(PYTH_USDC_FEED, 120).await;
+
+    let res = test_f
+        .marginfi_group
+        .try_handle_bankruptcy_with_nonce(test_f.get_bank(&BankMint::Usdc), &borrower_account, 2)
         .await;
 
     assert!(res.is_ok());
