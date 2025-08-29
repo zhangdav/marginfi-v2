@@ -5,4 +5,5 @@ mod operational_state;
 mod pyth_push;
 mod real_oracle_data;
 mod regression;
+mod risk_engine_flxible_oracle_checks;
 mod token_extensions;
