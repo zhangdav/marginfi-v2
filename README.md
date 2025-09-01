@@ -70,12 +70,7 @@ anchor build
 #### Rust Tests
 Run unit tests:
 ```bash
-./scripts/test-program.sh marginfi
-```
-
-Run with cleaner output:
-```bash
-./scripts/test-program.sh marginfi --sane
+cargo test
 ```
 
 #### Integration Tests
