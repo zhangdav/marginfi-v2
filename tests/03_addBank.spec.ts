@@ -1,13 +1,15 @@
-import { Program, workspace } from "@coral-xyz/anchor";
+import { BN, Program, workspace } from "@coral-xyz/anchor";
 import { Marginfi } from "../target/types/marginfi";
-import { Transaction } from "@solana/web3.js";
+import { Transaction, AccountMeta, PublicKey } from "@solana/web3.js";
 import { ASSET_TAG_DEFAULT, CLOSE_ENABLED_FLAG, defaultBankConfig, ORACLE_SETUP_PYTH_PUSH, PYTH_PULL_MIGRATED } from "./utils/types";
-import { bankKeypairUsdc, groupAdmin, marginfiGroup, ecosystem, oracles, INIT_POOL_ORIGINATION_FEE, verbose, globalFeeWallet, printBuffers } from "./rootHooks";
+import { bankKeypairUsdc, groupAdmin, marginfiGroup, ecosystem, oracles, INIT_POOL_ORIGINATION_FEE, verbose, globalFeeWallet, printBuffers, bankKeypairA, bankKeypairSol } from "./rootHooks";
 import { addBank, configureBankOracle } from "./utils/group-instructions";
 import { assert } from "chai";
 import { printBufferGroups } from "./utils/tools";
 import { assertKeysEqual, assertKeyDefault, assertI80F48Approx, assertI80F48Equal, assertBNEqual } from "./utils/genericTests";
 import { deriveLiquidityVault, deriveLiquidityVaultAuthority, deriveInsuranceVault, deriveInsuranceVaultAuthority, deriveFeeVault, deriveFeeVaultAuthority } from "./utils/pdas";
+import { bigNumberToWrappedI80F48 } from "@mrgnlabs/mrgn-common";
+import { RiskTier } from "@mrgnlabs/marginfi-client-v2";
 
 describe("Lending pool add bank (add bank to group)", () => {
     const program = workspace.Marginfi as Program<Marginfi>;
@@ -139,4 +141,246 @@ describe("Lending pool add bank (add bank to group)", () => {
         assertBNEqual(config.totalAssetValueInitLimit, 1_000_000_000_000);
         assert.equal(config.oracleMaxAge, 240);
     })
-})
+
+    it("(admin) Add bank (token A) - happy path", async () => {
+        let config = defaultBankConfig();
+        let bankKey = bankKeypairA.publicKey;
+
+        const oracleMeta: AccountMeta = {
+            pubkey: oracles.tokenAOracle.publicKey,
+            isSigner: false,
+            isWritable: false,
+        };
+        const config_ix = await program.methods
+            .lendingPoolConfigureBankOracle(
+                ORACLE_SETUP_PYTH_PUSH,
+                oracles.tokenAOracle.publicKey
+            )
+            .accountsPartial({
+                group: marginfiGroup.publicKey,
+                bank: bankKey,
+                admin: groupAdmin.wallet.publicKey,
+            })
+            .remainingAccounts([oracleMeta])
+            .instruction();
+
+        await groupAdmin.mrgnProgram.provider.sendAndConfirm!(
+            new Transaction().add(
+                await addBank(groupAdmin.mrgnProgram, {
+                    marginfiGroup: marginfiGroup.publicKey,
+                    feePayer: groupAdmin.wallet.publicKey,
+                    bankMint: ecosystem.tokenAMint.publicKey,
+                    bank: bankKey,
+                    config: config,
+                }),
+                config_ix
+            ),
+            [bankKeypairA]
+        );
+
+        if (verbose) {
+            console.log("*init token A bank " + bankKey);
+        }
+    });
+
+    it("(admin) Add bank (SOL) - happy path", async () => {
+        let config = defaultBankConfig();
+        config.oracleMaxConfidence = 123456789;
+        config.assetWeightInit = bigNumberToWrappedI80F48(0);
+        config.assetWeightMaint = bigNumberToWrappedI80F48(0);
+        config.riskTier = {
+            isolated: {
+                collateral: RiskTier.Isolated,
+                liquidationThreshould: 0.1,
+                liquidationPenalty: 0.1,
+            },
+        };
+
+        let bankKey = bankKeypairSol.publicKey;
+
+        const oracleMeta: AccountMeta = {
+            pubkey: oracles.wsolOracle.publicKey,
+            isSigner: false,
+            isWritable: false,
+        };
+        const config_ix = await program.methods
+            .lendingPoolConfigureBankOracle(
+                ORACLE_SETUP_PYTH_PUSH,
+                oracles.wsolOracle.publicKey
+            )
+            .accountsPartial({
+                group: marginfiGroup.publicKey,
+                bank: bankKey,
+                admin: groupAdmin.wallet.publicKey,
+            })
+            .remainingAccounts([oracleMeta])
+            .instruction();
+
+        await groupAdmin.mrgnProgram.provider.sendAndConfirm!(
+            new Transaction().add(
+                await addBank(groupAdmin.mrgnProgram, {
+                    marginfiGroup: marginfiGroup.publicKey,
+                    feePayer: groupAdmin.wallet.publicKey,
+                    bankMint: ecosystem.wsolMint.publicKey,
+                    bank: bankKey,
+                    config: config,
+                }),
+                config_ix
+            ),
+            [bankKeypairSol]
+        );
+
+        if (verbose) {
+            console.log("*init SOL bank " + bankKey);
+        }
+        const bank = await program.account.bank.fetch(bankKey);
+        assert.equal(bank.config.oracleMaxConfidence, 123456789);
+    });
+
+    it("Decodes a mainnet bank configured before manual padding", async () => {
+        // mainnet program ID
+        const id = new PublicKey("MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA");
+        const group = new PublicKey("4qp6Fx6tnZkY5Wropq9wUYgtFxXKwE6viZxFHg3rdAG8");
+    
+        let bonkBankKey = new PublicKey(
+          "DeyH7QxWvnbbaVB4zFrf4hoq7Q8z1ZT14co42BGwGtfM"
+        );
+        let bonkBankData = (
+          await program.provider.connection.getAccountInfo(bonkBankKey)
+        ).data.subarray(8);
+        if (printBuffers) {
+          printBufferGroups(bonkBankData, 16, 896);
+        }
+    
+        let cloudBankKey = new PublicKey(
+          "4kNXetv8hSv9PzvzPZzEs1CTH6ARRRi2b8h6jk1ad1nP"
+        );
+        let cloudBankData = (
+          await program.provider.connection.getAccountInfo(cloudBankKey)
+        ).data.subarray(8);
+        if (printBuffers) {
+          printBufferGroups(cloudBankData, 16, 896);
+        }
+    
+        const bbk = bonkBankKey;
+        const bb = await program.account.bank.fetch(bonkBankKey);
+        const bonkConfig = bb.config;
+        const bonkInterest = bonkConfig.interestRateConfig;
+    
+        assertKeysEqual(
+          bb.mint,
+          new PublicKey("DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263")
+        );
+        assert.equal(bb.mintDecimals, 5);
+        assertKeysEqual(bb.group, group);
+    
+        const [_liqAu_bb, liqAuBmp_bb] = deriveLiquidityVaultAuthority(id, bbk);
+        const [liquidityVault_bb, liqVaultBump_bb] = deriveLiquidityVault(id, bbk);
+        assertKeysEqual(bb.liquidityVault, liquidityVault_bb);
+        assert.equal(bb.liquidityVaultBump, liqVaultBump_bb);
+        assert.equal(bb.liquidityVaultAuthorityBump, liqAuBmp_bb);
+    
+        const [_insAu_bb, insAuBmp_bb] = deriveInsuranceVaultAuthority(id, bbk);
+        const [insVault_bb, insVaultBump_bb] = deriveInsuranceVault(id, bbk);
+        assertKeysEqual(bb.insuranceVault, insVault_bb);
+        assert.equal(bb.insuranceVaultBump, insVaultBump_bb);
+        assert.equal(bb.insuranceVaultAuthorityBump, insAuBmp_bb);
+    
+        const [_feeVaultAuth_bb, feeAuthBump_bb] = deriveFeeVaultAuthority(id, bbk);
+        const [feeVault_bb, feeVaultBump_bb] = deriveFeeVault(id, bbk);
+        assertKeysEqual(bb.feeVault, feeVault_bb);
+        assert.equal(bb.feeVaultBump, feeVaultBump_bb);
+        assert.equal(bb.feeVaultAuthorityBump, feeAuthBump_bb);
+    
+        assertKeyDefault(bb.emissionsMint);
+
+        assertBNEqual(bb.flags, 0);
+        assertBNEqual(bb.emissionsRate, 0);
+        assertI80F48Equal(bb.emissionsRemaining, 0);
+    
+        // 1 trillion BONK with 5 decimals (100_000_000_000_000_000)
+        assertBNEqual(bonkConfig.depositLimit, new BN("100000000000000000"));
+
+    
+        // Bank added before this feature existed, should be zero
+        assertI80F48Equal(bonkInterest.protocolOriginationFee, 0);
+    
+        assert.deepEqual(bonkConfig.operationalState, { operational: {} });
+        assert.deepEqual(bonkConfig.oracleSetup, {
+          pythPushOracle: {},
+        });
+        // roughly 26.41 billion BONK with 5 decimals.
+        assertBNEqual(bonkConfig.borrowLimit, 2_640_570_785_700_000);
+        assert.deepEqual(bonkConfig.riskTier, { collateral: {} });
+        assertBNEqual(bonkConfig.totalAssetValueInitLimit, 38_866_899);
+        assert.equal(bonkConfig.oracleMaxAge, 120);
+    
+        const cbk = cloudBankKey;
+        const cb = await program.account.bank.fetch(cloudBankKey);
+        const cloudConfig = cb.config;
+        const cloudInterest = cloudConfig.interestRateConfig;
+    
+        assertKeysEqual(
+          cb.mint,
+          new PublicKey("CLoUDKc4Ane7HeQcPpE3YHnznRxhMimJ4MyaUqyHFzAu")
+        );
+        assert.equal(cb.mintDecimals, 9);
+        assertKeysEqual(cb.group, group);
+    
+        const [_liqAu_cb, liqAuBmp_cb] = deriveLiquidityVaultAuthority(id, cbk);
+        const [liquidityVault_cb, liqVaultBump_cb] = deriveLiquidityVault(id, cbk);
+        assertKeysEqual(cb.liquidityVault, liquidityVault_cb);
+        assert.equal(cb.liquidityVaultBump, liqVaultBump_cb);
+        assert.equal(cb.liquidityVaultAuthorityBump, liqAuBmp_cb);
+    
+        const [_insAu_cb, insAuBmp_cb] = deriveInsuranceVaultAuthority(id, cbk);
+        const [insVault_cb, insVaultBump_cb] = deriveInsuranceVault(id, cbk);
+        assertKeysEqual(cb.insuranceVault, insVault_cb);
+        assert.equal(cb.insuranceVaultBump, insVaultBump_cb);
+        assert.equal(cb.insuranceVaultAuthorityBump, insAuBmp_cb);
+    
+        const [_feeVaultAuth_cb, feeAuthBump_cb] = deriveFeeVaultAuthority(id, cbk);
+        const [feeVault_cb, feeVaultBump_cb] = deriveFeeVault(id, cbk);
+        assertKeysEqual(cb.feeVault, feeVault_cb);
+        assert.equal(cb.feeVaultBump, feeVaultBump_cb);
+        assert.equal(cb.feeVaultAuthorityBump, feeAuthBump_cb);
+    
+        assertKeyDefault(cb.emissionsMint);
+    
+        assertBNEqual(cb.flags, 0);
+        assertBNEqual(cb.emissionsRate, 0);
+        assertI80F48Equal(cb.emissionsRemaining, 0);
+    
+        // 1 million CLOUD with 9 decimals (1_000_000_000_000_000)
+        assertBNEqual(cloudConfig.depositLimit, 1_000_000_000_000_000);
+    
+        // Bank added before this feature existed, should be zero
+        assertI80F48Equal(cloudInterest.protocolOriginationFee, 0);
+    
+        assert.deepEqual(cloudConfig.operationalState, { operational: {} });
+        assert.deepEqual(cloudConfig.oracleSetup, { switchboardV2: {} });
+        // 50,000 CLOUD with 9 decimals (50_000_000_000_000)
+        assertBNEqual(cloudConfig.borrowLimit, 50_000_000_000_000);
+        assert.deepEqual(cloudConfig.riskTier, { isolated: {} });
+        assertBNEqual(cloudConfig.totalAssetValueInitLimit, 0);
+        assert.equal(cloudConfig.oracleMaxAge, 60);
+        assert.equal(cloudConfig.oracleMaxConfidence, 0);
+    
+        // Assert emissions mint (one of the last fields) is also aligned correctly.
+        let pyUsdcBankKey = new PublicKey(
+          "Fe5QkKPVAh629UPP5aJ8sDZu8HTfe6M26jDQkKyXVhoA"
+        );
+        let pyUsdcBankData = (
+          await program.provider.connection.getAccountInfo(pyUsdcBankKey)
+        ).data.subarray(8);
+        if (printBuffers) {
+          printBufferGroups(pyUsdcBankData, 16, 896);
+        }
+    
+        const pb = await program.account.bank.fetch(pyUsdcBankKey);
+        assertKeysEqual(
+          pb.emissionsMint,
+          new PublicKey("2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo")
+        );
+    });
+});
