@@ -939,7 +939,7 @@ impl Bank {
     }
 
     pub(crate) fn override_emissions_flag(&mut self, flag: u64) {
-        assert!(Self::verify_group_flags(flag));
+        assert!(Self::verify_emissions_flags(flag));
         self.flags = flag;
     }
 
