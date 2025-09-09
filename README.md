@@ -52,7 +52,7 @@ The following devnet tokens are supported:
 1. Clone the repository:
 ```bash
 git clone <your-repo-url>
-cd marginfi
+cd marginfi-v2
 ```
 
 2. Install dependencies:
@@ -74,7 +74,7 @@ cargo test
 ```
 
 #### Integration Tests
-TypeScript integration tests (coming soon):
+TypeScript integration tests:
 ```bash
 anchor test
 ```
@@ -106,15 +106,21 @@ Run linter:
 
 ```
 ├── programs/
-│   └── marginfi/           # Main protocol program
-│       ├── src/
-│       │   ├── instructions/   # Program instructions
-│       │   ├── state/         # Account state definitions
-│       │   └── lib.rs         # Program entry point
-│       └── tests/             # Rust unit tests
-├── scripts/                # Deployment and utility scripts
-├── test-utils/            # Testing utilities
-└── target/                # Build artifacts
+│   ├── marginfi/           # Main protocol program
+│   │   ├── src/
+│   │   │   ├── instructions/   # Program instructions (marginfi_group, marginfi_account)
+│   │   │   ├── state/         # Account state definitions
+│   │   │   ├── constants.rs   # Protocol constants
+│   │   │   ├── errors.rs      # Error definitions
+│   │   │   └── lib.rs         # Program entry point
+│   │   └── tests/             # Rust unit tests
+│   └── mocks/              # Mock programs for testing
+├── crates/
+│   └── test_transfer_hook/ # Transfer hook testing utilities
+├── tests/                  # TypeScript integration tests
+├── test-utils/            # Shared testing utilities
+├── scripts/               # Deployment and utility scripts
+└── target/                # Build artifacts and IDL files
 ```
 
 ## Key Features
