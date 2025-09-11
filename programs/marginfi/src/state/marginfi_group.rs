@@ -590,7 +590,10 @@ impl Bank {
             config.total_asset_value_init_limit
         );
         set_if_some!(self.config.oracle_max_age, config.oracle_max_age);
-        set_if_some!(self.config.oracle_max_confidence, config.oracle_max_confidence);
+        set_if_some!(
+            self.config.oracle_max_confidence,
+            config.oracle_max_confidence
+        );
 
         if let Some(flag) = config.permissionless_bad_debt_settlement {
             msg!(
